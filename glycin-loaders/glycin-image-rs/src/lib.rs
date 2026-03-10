@@ -19,9 +19,11 @@ type Reader = Cursor<Vec<u8>>;
 type FrameReceiver = Receiver<Result<(RemoteFrame, bool), ProcessError>>;
 type FrameSender = Sender<Result<(RemoteFrame, bool), ProcessError>>;
 
+#[cfg(feature = "builtin")]
 #[derive(Debug, Clone)]
 pub struct BuiltinImageRs;
 
+#[cfg(feature = "builtin")]
 impl Builtin for BuiltinImageRs {
     fn config(&self) -> &'static str {
         include_str!("../glycin-image-rs.conf")
