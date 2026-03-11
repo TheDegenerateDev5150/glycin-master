@@ -13,13 +13,12 @@ pub struct ImgDecoder {
     rawimage: RawImage,
 }
 
-pub fn render(rawdata: &libopenraw::RawImage) -> Result<RemoteFrame, ProcessError> {
+pub fn render<B: ByteData>(rawdata: &libopenraw::RawImage) -> Result<Frame<B>, ProcessError> {
     let rawimage = rawdata
         .rendered_image(&libopenraw::RenderingOptions::default())
         .expected_error()?;
     let width = rawimage.width();
     let height = rawimage.height();
-    let mut memory = SharedMemory::new(rawimage.data_size() as u64).expected_error()?;
 
     let data8 = if let Some(data16) = rawimage.data16() {
         unsafe {
@@ -28,12 +27,10 @@ pub fn render(rawdata: &libopenraw::RawImage) -> Result<RemoteFrame, ProcessErro
     } else {
         rawimage.data8().expected_error()?
     };
-    Cursor::new(data8)
-        .read_exact(&mut memory)
-        .internal_error()?;
-    let texture = memory.into_binary_data();
 
-    RemoteFrame::new(
+    let texture = B::try_from_slice(data8).internal_error()?;
+
+    Frame::new(
         width.try_u32()?,
         height.try_u32()?,
         MemoryFormat::R16g16b16,
@@ -43,11 +40,11 @@ pub fn render(rawdata: &libopenraw::RawImage) -> Result<RemoteFrame, ProcessErro
 }
 
 impl LoaderImplementation for ImgDecoder {
-    fn init(
+    fn init<B: ByteData>(
         mut stream: UnixStream,
         _mime_type: String,
         _details: InitializationDetails,
-    ) -> Result<(ImgDecoder, ImageDetails), ProcessError> {
+    ) -> Result<(ImgDecoder, ImageDetails<B>), ProcessError> {
         let mut buf = vec![];
         stream.read_to_end(&mut buf).internal_error()?;
         let rawfile = libopenraw::rawfile_from_memory(buf, None).expected_error()?;
@@ -68,7 +65,7 @@ impl LoaderImplementation for ImgDecoder {
         let mut image_info = ImageDetails::new(w, h);
 
         image_info.info_format_name = Some(String::from("RAW"));
-        image_info.metadata_xmp = xmp.and_then(|xmp| BinaryData::from_data(xmp).ok());
+        image_info.metadata_xmp = xmp.and_then(|xmp| B::try_from_vec(xmp).ok());
         image_info.transformation_orientation = orientation
             .try_into()
             .ok()
@@ -80,7 +77,10 @@ impl LoaderImplementation for ImgDecoder {
         Ok((decoder, image_info))
     }
 
-    fn frame(&mut self, _frame_request: FrameRequest) -> Result<RemoteFrame, ProcessError> {
+    fn frame<B: ByteData>(
+        &mut self,
+        _frame_request: FrameRequest,
+    ) -> Result<Frame<B>, ProcessError> {
         render(&self.rawimage).expected_error()
     }
 }

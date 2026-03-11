@@ -1,12 +1,15 @@
-use glycin_utils::{ImgBuf, RemoteFrame};
+use glycin_utils::{Frame, FungibleMemory, RemoteFrame};
 
 use crate::Image;
 
-pub fn apply_exif_orientation(img_buf: ImgBuf, frame: &mut RemoteFrame, image: &Image) -> ImgBuf {
+pub fn apply_exif_orientation(
+    frame: Frame<FungibleMemory>,
+    image: &Image,
+) -> Frame<FungibleMemory> {
     if image.details().transformation_ignore_exif() {
-        img_buf
+        frame
     } else {
         let orientation = image.transformation_orientation();
-        glycin_utils::editing::change_orientation(img_buf, frame, orientation)
+        glycin_utils::editing::change_orientation(frame, orientation)
     }
 }

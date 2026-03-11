@@ -1,9 +1,10 @@
-use glycin_common::shared_memory::SharedMemory;
-use glycin_common::{BinaryData, ExtendedMemoryFormat, MemoryFormat, MemoryFormatInfo};
+use glycin_common::{ExtendedMemoryFormat, MemoryFormat, MemoryFormatInfo};
 
-use super::RemoteFrame;
 use crate::editing::EditingFrame;
-use crate::{DimensionTooLargerError, FrameDetails, GenericContexts, ImageDetails, ProcessError};
+use crate::{
+    ByteData, DimensionTooLargerError, Frame, FrameDetails, GenericContexts, ImageDetails,
+    ProcessError,
+};
 
 #[derive(Default, Clone, Debug)]
 pub struct Handler {
@@ -38,7 +39,7 @@ impl Handler {
         self
     }
 
-    pub fn info(&self, decoder: &mut impl image::ImageDecoder) -> ImageDetails {
+    pub fn info<B: ByteData>(&self, decoder: &mut impl image::ImageDecoder) -> ImageDetails<B> {
         let (width, height) = decoder.dimensions();
         let mut info = ImageDetails::new(width, height);
         info.info_format_name.clone_from(&self.format_name);
@@ -46,29 +47,53 @@ impl Handler {
         info
     }
 
-    pub fn frame(
+    pub fn frame<B: ByteData>(
         &self,
         mut decoder: impl image::ImageDecoder,
-    ) -> Result<RemoteFrame, ProcessError> {
-        let simple_frame = self.editing_frame(&decoder)?;
-
-        let width = simple_frame.width;
-        let height = simple_frame.height;
+    ) -> Result<Frame<B>, ProcessError> {
         let color_type = decoder.color_type();
-        let memory_format = memory_format_from_color_type(color_type);
-
         let details = self.frame_details(&mut decoder);
 
-        let mut memory = SharedMemory::new(decoder.total_bytes()).expected_error()?;
-        decoder.read_image(&mut memory).expected_error()?;
-        let texture = memory.into_binary_data();
+        let editing_frame = self.editing_frame(decoder)?;
 
-        let mut frame = RemoteFrame::new(width, height, memory_format, texture)?;
+        let width = editing_frame.width;
+        let height = editing_frame.height;
+        let memory_format = memory_format_from_color_type(color_type);
+
+        let texture = editing_frame.texture;
+
+        let mut frame = Frame::new(width, height, memory_format, texture)?;
         frame.details = details.expected_error()?;
 
         Ok(frame)
     }
 
+    pub fn editing_frame<B: ByteData>(
+        &self,
+        decoder: impl image::ImageDecoder,
+    ) -> Result<EditingFrame<B>, ProcessError> {
+        let color_type = decoder.color_type();
+        let memory_format = ExtendedMemoryFormat::from(memory_format_from_color_type(color_type));
+        let (width, height) = decoder.dimensions();
+        let stride = memory_format
+            .n_bytes()
+            .u32()
+            .checked_mul(width)
+            .ok_or(DimensionTooLargerError)?;
+
+        let mut texture = B::new(decoder.total_bytes()).expected_error()?;
+        decoder.read_image(&mut texture).expected_error()?;
+
+        Ok(EditingFrame {
+            width,
+            height,
+            stride,
+            memory_format,
+            texture,
+        })
+    }
+
+    /*
     pub fn editing_frame(
         &self,
         decoder: &impl image::ImageDecoder,
@@ -88,18 +113,18 @@ impl Handler {
             stride,
             memory_format,
         })
-    }
+    }*/
 
-    pub fn frame_details(
+    pub fn frame_details<B: ByteData>(
         &self,
         decoder: &mut impl image::ImageDecoder,
-    ) -> Result<FrameDetails, ProcessError> {
+    ) -> Result<FrameDetails<B>, ProcessError> {
         let mut details = FrameDetails {
             color_icc_profile: decoder
                 .icc_profile()
                 .ok()
                 .flatten()
-                .map(BinaryData::from_data)
+                .map(B::try_from_vec)
                 .transpose()
                 .expected_error()?,
             ..Default::default()

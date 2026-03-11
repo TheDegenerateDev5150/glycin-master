@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display};
 use std::sync::Arc;
 
-use crate::DimensionTooLargerError;
+use crate::{DimensionTooLargerError, FungibleMemory, LocalMemory};
 
 mod change_memory_format;
 mod clip;
@@ -16,13 +16,28 @@ use gufo_common::read::ReadError;
 pub use operations::apply_operations;
 pub use orientation::change_orientation;
 
+use crate::ByteData;
+
 #[derive(Debug, Clone)]
-pub struct EditingFrame {
+pub struct EditingFrame<B: ByteData> {
     pub width: u32,
     pub height: u32,
     /// Line stride
     pub stride: u32,
     pub memory_format: ExtendedMemoryFormat,
+    pub texture: B,
+}
+
+impl EditingFrame<LocalMemory> {
+    pub fn into_funglible(self) -> EditingFrame<FungibleMemory> {
+        EditingFrame {
+            width: self.width,
+            height: self.height,
+            stride: self.stride,
+            memory_format: self.memory_format,
+            texture: self.texture.into_fungible(),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error, Clone)]

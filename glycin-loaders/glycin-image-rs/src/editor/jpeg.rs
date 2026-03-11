@@ -17,10 +17,10 @@ pub fn load(mut stream: glycin_utils::UnixStream) -> Result<EditJpeg, glycin_uti
     Ok(EditJpeg { buf })
 }
 
-pub fn apply_sparse(
+pub fn apply_sparse<B: ByteData>(
     edit_jpeg: &EditJpeg,
     mut operations: Operations,
-) -> Result<SparseEditorOutput, glycin_utils::ProcessError> {
+) -> Result<SparseEditorOutput<B>, glycin_utils::ProcessError> {
     let buf = edit_jpeg.buf.clone();
     let jpeg = gufo::jpeg::Jpeg::new(buf).expected_error()?;
 
@@ -40,10 +40,10 @@ pub fn apply_sparse(
     )?))
 }
 
-pub fn apply_complete(
+pub fn apply_complete<B: ByteData>(
     edit_jpeg: &EditJpeg,
     mut operations: Operations,
-) -> Result<CompleteEditorOutput, glycin_utils::ProcessError> {
+) -> Result<CompleteEditorOutput<B>, glycin_utils::ProcessError> {
     let buf = edit_jpeg.buf.clone();
 
     let jpeg = gufo::jpeg::Jpeg::new(buf).expected_error()?;
@@ -64,10 +64,10 @@ pub fn apply_complete(
     apply_non_sparse(jpeg, operations)
 }
 
-fn apply_non_sparse(
+fn apply_non_sparse<B: ByteData>(
     jpeg: Jpeg,
     operations: Operations,
-) -> Result<CompleteEditorOutput, glycin_utils::ProcessError> {
+) -> Result<CompleteEditorOutput<B>, glycin_utils::ProcessError> {
     let mut out_buf = Vec::new();
     let encoder = jpeg.encoder(&mut out_buf).expected_error()?;
     let mut buf = jpeg.into_inner();
@@ -111,20 +111,21 @@ fn apply_non_sparse(
         }
     };
 
-    let mut simple_frame = EditingFrame {
+    let editing_frame = EditingFrame {
         width: info.width as u32,
         height: info.height as u32,
         stride: info.width as u32 * glycin_memory_format.n_bytes().u32(),
         memory_format: glycin_memory_format,
+        texture: pixels.into(),
     };
 
-    pixels = editing::apply_operations(pixels, &mut simple_frame, &operations).expected_error()?;
+    let editing_frame = editing::apply_operations(editing_frame, &operations).expected_error()?;
 
     encoder
         .encode(
-            &pixels,
-            simple_frame.width as u16,
-            simple_frame.height as u16,
+            &editing_frame.texture,
+            editing_frame.width as u16,
+            editing_frame.height as u16,
             encoder_memory_format,
         )
         .expected_error()?;
@@ -144,7 +145,7 @@ fn apply_non_sparse(
         remove_metadata_rotate.apply(&mut out_buf);
     }
 
-    let binary_data = BinaryData::from_data(out_buf).expected_error()?;
+    let binary_data = B::try_from_vec(out_buf).expected_error()?;
     Ok(CompleteEditorOutput::new(binary_data))
 }
 

@@ -86,9 +86,7 @@ pub use api_editor::*;
 pub use api_loader::*;
 pub use config::COMPAT_VERSION;
 pub use error::{Error, ErrorContext, ErrorCtx};
-pub use glycin_common::{
-    BinaryData, MemoryFormat, MemoryFormatSelection, Operation, OperationId, Operations,
-};
+pub use glycin_common::{MemoryFormat, MemoryFormatSelection, Operation, OperationId, Operations};
 pub use gufo_common::cicp::Cicp;
 pub use pool::{Pool, PoolConfig};
 #[cfg(feature = "gdk4")]

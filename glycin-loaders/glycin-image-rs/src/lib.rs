@@ -16,8 +16,8 @@ use image::{AnimationDecoder, ImageDecoder, ImageResult, Limits, codecs};
 init_main_loader_editor!(ImgDecoder, ImgEditor);
 
 type Reader = Cursor<Vec<u8>>;
-type FrameReceiver = Receiver<Result<(RemoteFrame, bool), ProcessError>>;
-type FrameSender = Sender<Result<(RemoteFrame, bool), ProcessError>>;
+type FrameReceiver = Receiver<Result<(Frame<LocalMemory>, bool), ProcessError>>;
+type FrameSender = Sender<Result<(Frame<LocalMemory>, bool), ProcessError>>;
 
 #[cfg(feature = "builtin")]
 #[derive(Debug, Clone)]
@@ -34,6 +34,11 @@ impl Builtin for BuiltinImageRs {
     }
 }
 
+#[cfg(feature = "builtin")]
+type MemoryX = LocalMemory;
+#[cfg(not(feature = "builtin"))]
+type MemoryX = SharedMemory;
+
 #[derive(Default)]
 pub struct ImgDecoder {
     pub format: Mutex<Option<ImageRsFormat<Reader>>>,
@@ -42,11 +47,11 @@ pub struct ImgDecoder {
 }
 
 impl LoaderImplementation for ImgDecoder {
-    fn init(
+    fn init<B: ByteData>(
         mut stream: UnixStream,
         mime_type: String,
         _details: InitializationDetails,
-    ) -> Result<(Self, ImageDetails), ProcessError> {
+    ) -> Result<(Self, ImageDetails<B>), ProcessError> {
         image_extras::register();
 
         let mut buf = Vec::new();
@@ -67,14 +72,14 @@ impl LoaderImplementation for ImgDecoder {
                 image_info.metadata_exif = metadata
                     .exif
                     .first()
-                    .map(BinaryData::from_data)
+                    .map(|x| B::try_from_slice(x))
                     .transpose()
                     .expected_error()?;
 
                 image_info.metadata_xmp = metadata
                     .xmp
                     .first()
-                    .map(BinaryData::from_data)
+                    .map(|x| B::try_from_slice(x))
                     .transpose()
                     .expected_error()?;
 
@@ -108,7 +113,10 @@ impl LoaderImplementation for ImgDecoder {
         Ok((loader_impelementation, image_info))
     }
 
-    fn frame(&mut self, frame_request: FrameRequest) -> Result<RemoteFrame, ProcessError> {
+    fn frame<B: ByteData>(
+        &mut self,
+        frame_request: FrameRequest,
+    ) -> Result<Frame<B>, ProcessError> {
         let mut frame = if let Some(decoder) = std::mem::take(&mut *self.format.lock().unwrap()) {
             decoder.frame().expected_error()?
         } else if let Some((ref thread, ref recv)) = *self.thread.lock().unwrap() {
@@ -131,7 +139,7 @@ impl LoaderImplementation for ImgDecoder {
             ]
         });
 
-        Ok(frame)
+        Ok(frame.into_other().expected_error()?)
     }
 }
 
@@ -305,7 +313,7 @@ impl<T: std::io::BufRead + std::io::Seek> ImageRsFormat<T> {
         }
     }
 
-    fn info(&mut self) -> ImageDetails {
+    fn info<B: ByteData>(&mut self) -> ImageDetails<B> {
         match self.decoder {
             ImageRsDecoder::Bmp(ref mut d) => self.handler.info(d),
             ImageRsDecoder::Dds(ref mut d) => self.handler.info(d),
@@ -326,7 +334,7 @@ impl<T: std::io::BufRead + std::io::Seek> ImageRsFormat<T> {
         }
     }
 
-    fn frame(self) -> Result<RemoteFrame, ProcessError> {
+    fn frame<B: ByteData>(self) -> Result<Frame<B>, ProcessError> {
         match self.decoder {
             ImageRsDecoder::Bmp(d) => self.handler.frame(d),
             ImageRsDecoder::Dds(d) => self.handler.frame(d),
@@ -347,7 +355,7 @@ impl<T: std::io::BufRead + std::io::Seek> ImageRsFormat<T> {
         }
     }
 
-    fn frame_details(&mut self) -> Result<FrameDetails, ProcessError> {
+    fn frame_details<B: ByteData>(&mut self) -> Result<FrameDetails<B>, ProcessError> {
         match self.decoder {
             ImageRsDecoder::Bmp(ref mut d) => self.handler.frame_details(d),
             ImageRsDecoder::Dds(ref mut d) => self.handler.frame_details(d),

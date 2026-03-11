@@ -5,24 +5,24 @@ use gufo_common::math::Checked;
 use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
 
-use crate::{ImgBuf, MemoryFormat, RemoteFrame, editing};
+use crate::shared_memory::FungibleMemory;
+use crate::{Frame, MemoryFormat, editing};
 pub fn change_memory_format(
-    mut img_buf: ImgBuf,
-    mut frame: RemoteFrame,
+    mut frame: Frame<FungibleMemory>,
     target_format: MemoryFormat,
-) -> Result<(RemoteFrame, ImgBuf), editing::Error> {
+) -> Result<Frame<FungibleMemory>, editing::Error> {
     let src_format = frame.memory_format;
 
     if src_format == target_format {
         log::debug!("Same image format {src_format:?}, no need for transformation");
-        return Ok((frame, img_buf));
+        return Ok(frame);
     }
 
     log::debug!("Starting to transform image format from {src_format:?} to {target_format:?}");
     let start_instant = std::time::Instant::now();
 
     let src_format = frame.memory_format;
-    let src_data = img_buf.as_mut_slice();
+    let src_data = frame.texture;
     let src_pixel_n_bytes = src_format.n_bytes().usize();
 
     let target_pixel_n_bytes = target_format.n_bytes().usize();
@@ -139,28 +139,24 @@ pub fn change_memory_format(
 
     frame.stride = new_stride;
     frame.memory_format = target_format;
+    frame.texture = FungibleMemory::try_from(new_data).unwrap();
 
     log::debug!(
         "Transformation completed after {:?}",
         start_instant.elapsed()
     );
 
-    Ok((frame, ImgBuf::Vec(new_data)))
+    Ok(frame)
 }
 
 #[cfg(test)]
 mod test {
-    use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd};
-
-    use glycin_common::BinaryData;
-
     use super::*;
+    use crate::{ByteData, RemoteFrame, SharedMemory};
 
     #[test]
     fn u16_to_u8() {
-        let (a, _) = std::os::unix::net::UnixStream::pair().unwrap();
-        let texture = BinaryData::from(unsafe { OwnedFd::from_raw_fd(a.into_raw_fd()) });
-        let img_buf = ImgBuf::Vec(if cfg!(target_endian = "little") {
+        let texture = FungibleMemory::from_vec(if cfg!(target_endian = "little") {
             vec![
                 127, 0, 128, 0, 127, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 127, 253, 128, 253,
                 255, 255,
@@ -171,35 +167,31 @@ mod test {
                 255, 255,
             ]
         });
-        let frame = RemoteFrame::new(2, 2, crate::MemoryFormat::R16g16b16, texture).unwrap();
-        let x = change_memory_format(img_buf, frame, MemoryFormat::R8g8b8)
-            .unwrap()
-            .1;
-        assert_eq!(x.as_slice(), &[0, 1, 2, 3, 4, 5, 6, 7, 8, 253, 254, 255]);
+        let frame = Frame::new(2, 2, crate::MemoryFormat::R16g16b16, texture).unwrap();
+        let new_frame = change_memory_format(frame, MemoryFormat::R8g8b8).unwrap();
+        assert_eq!(
+            &*new_frame.texture,
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 253, 254, 255]
+        );
     }
 
     #[test]
     fn u8alpha_to_u8reversed() {
-        let (a, _) = std::os::unix::net::UnixStream::pair().unwrap();
-        let texture = BinaryData::from(unsafe { OwnedFd::from_raw_fd(a.into_raw_fd()) });
-        let img_buf = ImgBuf::Vec(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
-        let frame = RemoteFrame::new(2, 2, crate::MemoryFormat::R8g8b8a8, texture).unwrap();
-        let x = change_memory_format(img_buf, frame, MemoryFormat::B8g8r8)
-            .unwrap()
-            .1;
-        assert_eq!(x.as_slice(), &[3, 2, 1, 7, 6, 5, 11, 10, 9, 15, 14, 13]);
+        let texture =
+            FungibleMemory::from_vec(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        let frame = Frame::new(2, 2, crate::MemoryFormat::R8g8b8a8, texture).unwrap();
+        let new_frame = change_memory_format(frame, MemoryFormat::B8g8r8).unwrap();
+        assert_eq!(
+            &*new_frame.texture,
+            &[3, 2, 1, 7, 6, 5, 11, 10, 9, 15, 14, 13]
+        );
     }
 
     #[test]
     fn u8premultiplied_to_u8() {
-        let (a, _) = std::os::unix::net::UnixStream::pair().unwrap();
-        let texture = BinaryData::from(unsafe { OwnedFd::from_raw_fd(a.into_raw_fd()) });
-        let img_buf = ImgBuf::Vec(vec![127, 63, 0, 127, 127, 63, 0, 255]);
-        let frame =
-            RemoteFrame::new(1, 2, crate::MemoryFormat::R8g8b8a8Premultiplied, texture).unwrap();
-        let x = change_memory_format(img_buf, frame, MemoryFormat::R8g8b8a8)
-            .unwrap()
-            .1;
-        assert_eq!(x.as_slice(), &[255, 126, 0, 127, 127, 63, 0, 255]);
+        let texture = FungibleMemory::from_vec(vec![127, 63, 0, 127, 127, 63, 0, 255]);
+        let frame = Frame::new(1, 2, crate::MemoryFormat::R8g8b8a8Premultiplied, texture).unwrap();
+        let frame = change_memory_format(frame, MemoryFormat::R8g8b8a8).unwrap();
+        assert_eq!(&*frame.texture, &[255, 126, 0, 127, 127, 63, 0, 255]);
     }
 }

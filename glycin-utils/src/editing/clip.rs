@@ -4,12 +4,13 @@ use glycin_common::MemoryFormatInfo;
 use gufo_common::math::{Checked, checked};
 
 use super::{EditingFrame, Error};
+use crate::editing::orientation::BasicFrame;
+use crate::shared_memory::FungibleMemory;
 
 pub fn clip(
-    buf: Vec<u8>,
-    frame: &mut EditingFrame,
+    mut frame: EditingFrame<FungibleMemory>,
     (x, y, width, height): (u32, u32, u32, u32),
-) -> Result<Vec<u8>, Error> {
+) -> Result<EditingFrame<FungibleMemory>, Error> {
     let pixel_size = frame.memory_format.n_bytes().u32();
 
     checked![pixel_size, x, y];
@@ -30,7 +31,7 @@ pub fn clip(
 
     checked![stride];
 
-    let mut cur = Cursor::new(buf);
+    let mut cur = Cursor::new(&**frame.texture());
     let mut row = vec![0; (width as usize * pixel_size.usize()).check()?];
 
     cur.seek_relative((y.i64() * stride).check()?)?;
@@ -46,5 +47,7 @@ pub fn clip(
     frame.height = height;
     frame.stride = new_stride;
 
-    Ok(new)
+    frame.set_texture(FungibleMemory::from_vec(new));
+
+    Ok(frame)
 }

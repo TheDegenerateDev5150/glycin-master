@@ -7,18 +7,19 @@ use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 
 use futures_util::FutureExt;
-use glycin_common::{BinaryData, Operations};
+use glycin_common::Operations;
 use serde::{Deserialize, Serialize};
-use zbus::zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type};
+use zbus::zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type, as_value};
 
 use crate::dbus_types::{self, *};
 use crate::error::*;
+use crate::{ByteData, SharedMemory};
 
 #[derive(DeserializeDict, SerializeDict, Type, Debug)]
 #[zvariant(signature = "dict")]
 #[non_exhaustive]
 pub struct EditRequest {
-    pub operations: BinaryData,
+    pub operations: SharedMemory,
 }
 
 impl EditRequest {
@@ -27,20 +28,12 @@ impl EditRequest {
             .to_message_pack()
             .expected_error()
             .map_err(|x| x.into_editor_error())?;
-        let operations = BinaryData::from_data(operations)
-            .expected_error()
-            .map_err(|x| x.into_editor_error())?;
+        let operations = SharedMemory::try_from_vec(operations).unwrap();
         Ok(Self { operations })
     }
 
     pub fn operations(&self) -> Result<Operations, RemoteError> {
-        let binary_data = self
-            .operations
-            .get()
-            .expected_error()
-            .map_err(|x| x.into_editor_error())?;
-
-        let operations = Operations::from_slice(&binary_data)
+        let operations = Operations::from_slice(&self.operations)
             .expected_error()
             .map_err(|x| x.into_editor_error())?;
 
@@ -52,16 +45,27 @@ impl EditRequest {
 ///
 /// This either contains `byte_changes` or `data`, depending on whether a sparse
 /// application of the operations was possible.
-#[derive(DeserializeDict, SerializeDict, Type, Debug, Clone)]
+#[derive(Deserialize, Serialize, Type, Debug)]
 #[zvariant(signature = "dict")]
 #[non_exhaustive]
-pub struct SparseEditorOutput {
+pub struct SparseEditorOutput<B: ByteData> {
+    #[serde(
+        with = "as_value::optional",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
     pub byte_changes: Option<ByteChanges>,
-    pub data: Option<BinaryData>,
+    #[serde(
+        with = "as_value::optional",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub data: Option<B>,
+    #[serde(with = "as_value")]
     pub info: EditorOutputInfo,
 }
 
-impl SparseEditorOutput {
+impl<B: ByteData> SparseEditorOutput<B> {
     pub fn byte_changes(byte_changes: ByteChanges) -> Self {
         SparseEditorOutput {
             byte_changes: Some(byte_changes),
@@ -71,8 +75,8 @@ impl SparseEditorOutput {
     }
 }
 
-impl From<CompleteEditorOutput> for SparseEditorOutput {
-    fn from(value: CompleteEditorOutput) -> Self {
+impl<B: ByteData> From<CompleteEditorOutput<B>> for SparseEditorOutput<B> {
+    fn from(value: CompleteEditorOutput<B>) -> Self {
         Self {
             byte_changes: None,
             data: Some(value.data),
@@ -116,16 +120,18 @@ impl ByteChanges {
     }
 }
 
-#[derive(DeserializeDict, SerializeDict, Type, Debug, Clone)]
+#[derive(Deserialize, Serialize, Type, Debug)]
 #[zvariant(signature = "dict")]
 #[non_exhaustive]
-pub struct CompleteEditorOutput {
-    pub data: BinaryData,
+pub struct CompleteEditorOutput<B: ByteData> {
+    #[serde(with = "as_value")]
+    pub data: B,
+    #[serde(with = "as_value")]
     pub info: EditorOutputInfo,
 }
 
-impl CompleteEditorOutput {
-    pub fn new(data: BinaryData) -> Self {
+impl<B: ByteData> CompleteEditorOutput<B> {
+    pub fn new(data: B) -> Self {
         Self {
             data,
             info: Default::default(),
@@ -133,7 +139,7 @@ impl CompleteEditorOutput {
     }
 
     pub fn new_lossless(data: Vec<u8>) -> Result<Self, ProcessError> {
-        let data = BinaryData::from_data(data).expected_error()?;
+        let data = B::try_from_vec(data).expected_error()?;
         let info = EditorOutputInfo { lossless: true };
         Ok(Self { data, info })
     }
@@ -161,9 +167,9 @@ impl<E: EditorImplementation> Editor<E> {
     async fn create(
         &self,
         mime_type: String,
-        new_image: NewImage,
+        new_image: NewImage<SharedMemory>,
         encoding_options: EncodingOptions,
-    ) -> Result<EncodedImage, RemoteError> {
+    ) -> Result<EncodedImage<SharedMemory>, RemoteError> {
         E::create(mime_type, new_image, encoding_options).map_err(|x| x.into_editor_error())
     }
 
@@ -225,7 +231,7 @@ impl<E: EditorImplementation> EditableImage<E> {
     async fn apply_sparse(
         &self,
         edit_request: EditRequest,
-    ) -> Result<SparseEditorOutput, RemoteError> {
+    ) -> Result<SparseEditorOutput<SharedMemory>, RemoteError> {
         let operations = edit_request.operations()?;
 
         let editor_implementation = self.editor_implementation.clone();
@@ -246,7 +252,7 @@ impl<E: EditorImplementation> EditableImage<E> {
     async fn apply_complete(
         &self,
         edit_request: EditRequest,
-    ) -> Result<CompleteEditorOutput, RemoteError> {
+    ) -> Result<CompleteEditorOutput<SharedMemory>, RemoteError> {
         let operations = edit_request.operations()?;
 
         let editor_implementation = self.editor_implementation.clone();
@@ -291,19 +297,25 @@ pub trait EditorImplementation: Send + Sync + Sized + 'static {
         details: InitializationDetails,
     ) -> Result<Self, ProcessError>;
 
-    fn create(
+    fn create<B: ByteData>(
         mime_type: String,
-        new_image: NewImage,
+        new_image: NewImage<B>,
         encoding_options: EncodingOptions,
-    ) -> Result<EncodedImage, ProcessError>;
+    ) -> Result<EncodedImage<B>, ProcessError>;
 
-    fn apply_sparse(&self, operations: Operations) -> Result<SparseEditorOutput, ProcessError> {
+    fn apply_sparse<B: ByteData>(
+        &self,
+        operations: Operations,
+    ) -> Result<SparseEditorOutput<B>, ProcessError> {
         let complete = Self::apply_complete(self, operations)?;
 
         Ok(SparseEditorOutput::from(complete))
     }
 
-    fn apply_complete(&self, operations: Operations) -> Result<CompleteEditorOutput, ProcessError>;
+    fn apply_complete<B: ByteData>(
+        &self,
+        operations: Operations,
+    ) -> Result<CompleteEditorOutput<B>, ProcessError>;
 }
 
 /// Give a `None` for a non-existent `EditorImplementation`
@@ -320,18 +332,18 @@ impl EditorImplementation for VoidEditorImplementation {
         unreachable!()
     }
 
-    fn create(
+    fn create<B: ByteData>(
         _mime_type: String,
-        _new_image: NewImage,
+        _new_image: NewImage<B>,
         _encoding_options: EncodingOptions,
-    ) -> Result<EncodedImage, ProcessError> {
+    ) -> Result<EncodedImage<B>, ProcessError> {
         unreachable!()
     }
 
-    fn apply_complete(
+    fn apply_complete<B: ByteData>(
         &self,
         _operations: Operations,
-    ) -> Result<CompleteEditorOutput, ProcessError> {
+    ) -> Result<CompleteEditorOutput<B>, ProcessError> {
         unreachable!()
     }
 }

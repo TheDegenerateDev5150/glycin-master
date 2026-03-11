@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 mod utils;
 
 use gio::prelude::FileExt;
-use glycin::{BinaryData, SparseEdit};
+use glycin::{RemoteBinaryData, SparseEdit};
 use utils::*;
 
 #[test]
@@ -78,7 +78,7 @@ fn write_tmp(path: impl AsRef<Path>, data: &[u8]) -> PathBuf {
     tmp_path
 }
 
-async fn apply_operations_sparse(image: &Path, operations: &Path) -> glycin::BinaryData {
+async fn apply_operations_sparse(image: &Path, operations: &Path) -> glycin::RemoteBinaryData {
     let reader = std::fs::File::open(operations).unwrap();
     let operations: glycin::Operations = serde_yaml::from_reader(reader).unwrap();
 
@@ -102,11 +102,11 @@ async fn apply_operations_sparse(image: &Path, operations: &Path) -> glycin::Bin
         );
 
         let data = std::fs::read(tmp_file.path().unwrap()).unwrap();
-        BinaryData::from_data(data).unwrap()
+        RemoteBinaryData::from_data(data).unwrap()
     }
 }
 
-async fn apply_operations_complete(image: &Path, operations: &Path) -> glycin::BinaryData {
+async fn apply_operations_complete(image: &Path, operations: &Path) -> glycin::RemoteBinaryData {
     let reader = std::fs::File::open(operations).unwrap();
     let operations: glycin::Operations = serde_yaml::from_reader(reader).unwrap();
 

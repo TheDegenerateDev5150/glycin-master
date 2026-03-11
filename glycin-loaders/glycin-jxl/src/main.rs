@@ -2,7 +2,7 @@
 
 mod editing;
 
-use std::io::{Cursor, Read, Write};
+use std::io::Read;
 use std::mem::MaybeUninit;
 
 use glycin_utils::*;
@@ -27,11 +27,11 @@ pub struct ImgDecoder {
 }
 
 impl LoaderImplementation for ImgDecoder {
-    fn init(
+    fn init<B: ByteData>(
         mut stream: UnixStream,
         _mime_type: String,
         _details: InitializationDetails,
-    ) -> Result<(Self, ImageDetails), ProcessError> {
+    ) -> Result<(Self, ImageDetails<B>), ProcessError> {
         let mut data = Vec::new();
         stream.read_to_end(&mut data).expected_error()?;
         let (info, icc_profile, exif, cicp) = basic_info(&data);
@@ -40,10 +40,7 @@ impl LoaderImplementation for ImgDecoder {
 
         let mut image_info = ImageDetails::new(info.xsize, info.ysize);
         image_info.info_format_name = Some(String::from("JPEG XL"));
-        image_info.metadata_exif = exif
-            .map(BinaryData::from_data)
-            .transpose()
-            .expected_error()?;
+        image_info.metadata_exif = exif.map(B::try_from_vec).transpose().expected_error()?;
         image_info.transformation_ignore_exif = true;
 
         let loader_implementation = ImgDecoder {
@@ -55,7 +52,10 @@ impl LoaderImplementation for ImgDecoder {
         Ok((loader_implementation, image_info))
     }
 
-    fn frame(&mut self, _frame_request: FrameRequest) -> Result<RemoteFrame, ProcessError> {
+    fn frame<B: glycin_utils::ByteData>(
+        &mut self,
+        _frame_request: FrameRequest,
+    ) -> Result<Frame<B>, ProcessError> {
         let runner = jpegxl_rs::parallel::resizable_runner::ResizableRunner::new(None).unwrap();
         let decoder = jpegxl_rs::decoder_builder()
             .parallel_runner(&runner)
@@ -127,19 +127,14 @@ impl LoaderImplementation for ImgDecoder {
         let width = metadata.width;
         let height = metadata.height;
 
-        let mut memory = SharedMemory::new(bytes.len() as u64).expected_error()?;
+        let texture = B::try_from_slice(bytes).expected_error()?;
 
-        Cursor::new(memory.as_mut())
-            .write_all(&bytes)
-            .internal_error()?;
-        let texture = memory.into_binary_data();
-
-        let mut frame = RemoteFrame::new(width, height, memory_format, texture).expected_error()?;
+        let mut frame = Frame::new(width, height, memory_format, texture).expected_error()?;
 
         frame.details.color_icc_profile = self
             .icc_profile
-            .clone()
-            .map(BinaryData::from_data)
+            .as_deref()
+            .map(B::try_from_slice)
             .transpose()
             .expected_error()?;
 

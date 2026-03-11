@@ -2,9 +2,10 @@ use glycin_common::{ExtendedMemoryFormat, MemoryFormatInfo};
 use gufo_common::orientation::{Orientation, Rotation};
 
 use super::EditingFrame;
-use crate::{ImgBuf, RemoteFrame};
+use crate::shared_memory::FungibleMemory;
+use crate::{ByteData, Frame};
 
-pub trait FrameDimensions {
+pub trait BasicFrame<B: ByteData> {
     fn width(&self) -> u32;
     fn set_width(&mut self, width: u32);
     fn height(&self) -> u32;
@@ -12,9 +13,12 @@ pub trait FrameDimensions {
     fn stride(&self) -> u32;
     fn set_stride(&mut self, stride: u32);
     fn memory_format(&self) -> ExtendedMemoryFormat;
+    fn texture(&self) -> &B;
+    fn texture_mut(&mut self) -> &mut B;
+    fn set_texture(&mut self, texture: B);
 }
 
-impl FrameDimensions for EditingFrame {
+impl<B: ByteData> BasicFrame<B> for EditingFrame<B> {
     fn width(&self) -> u32 {
         self.width
     }
@@ -42,9 +46,21 @@ impl FrameDimensions for EditingFrame {
     fn memory_format(&self) -> ExtendedMemoryFormat {
         self.memory_format
     }
+
+    fn texture(&self) -> &B {
+        &self.texture
+    }
+
+    fn set_texture(&mut self, texture: B) {
+        self.texture = texture;
+    }
+
+    fn texture_mut(&mut self) -> &mut B {
+        &mut self.texture
+    }
 }
 
-impl FrameDimensions for RemoteFrame {
+impl<B: ByteData> BasicFrame<B> for Frame<B> {
     fn width(&self) -> u32 {
         self.width
     }
@@ -72,14 +88,25 @@ impl FrameDimensions for RemoteFrame {
     fn memory_format(&self) -> ExtendedMemoryFormat {
         self.memory_format.into()
     }
+
+    fn texture(&self) -> &B {
+        &self.texture
+    }
+
+    fn texture_mut(&mut self) -> &mut B {
+        &mut self.texture
+    }
+
+    fn set_texture(&mut self, texture: B) {
+        self.texture = texture;
+    }
 }
 
 #[allow(clippy::arithmetic_side_effects, clippy::cast_possible_truncation)]
-pub fn change_orientation(
-    mut img_buf: ImgBuf,
-    frame: &mut impl FrameDimensions,
+pub fn change_orientation<F: BasicFrame<FungibleMemory>>(
+    mut frame: F,
     transformation: Orientation,
-) -> ImgBuf {
+) -> F {
     let stride = frame.stride() as usize;
     let width = frame.width() as usize;
     let height = frame.height() as usize;
@@ -93,53 +120,63 @@ pub fn change_orientation(
                 for i in 0..pixel_size {
                     let p0 = x * pixel_size + y * stride + i;
                     let p1 = (width - 1 - x) * pixel_size + y * stride + i;
-                    img_buf.swap(p0, p1);
+                    frame.texture_mut().swap(p0, p1);
                 }
             }
         }
     }
 
     match transformation.rotate() {
-        Rotation::_0 => img_buf,
+        Rotation::_0 => frame,
         Rotation::_270 => {
-            let mut v = vec![0; n_bytes];
+            let mut target = vec![0; n_bytes];
             frame.set_width(height as u32);
             frame.set_height(width as u32);
             frame.set_stride((height * pixel_size) as u32);
+
+            let src = frame.texture_mut();
 
             for x in 0..width {
                 for y in 0..height {
                     for i in 0..pixel_size {
                         let p0 = x * pixel_size + y * stride + i;
                         let p1 = x * height * pixel_size + (height - 1 - y) * pixel_size + i;
-                        v[p1] = img_buf[p0];
+                        target[p1] = src[p0];
                     }
                 }
             }
 
-            ImgBuf::Vec(v)
+            frame.set_texture(FungibleMemory::from_vec(target));
+
+            frame
         }
         Rotation::_90 => {
-            let mut v = vec![0; n_bytes];
+            let mut target = vec![0; n_bytes];
             frame.set_width(height as u32);
             frame.set_height(width as u32);
             frame.set_stride((height * pixel_size) as u32);
+
+            let src = frame.texture_mut();
 
             for x in 0..width {
                 for y in 0..height {
                     for i in 0..pixel_size {
                         let p0 = x * pixel_size + y * stride + i;
                         let p1 = (width - 1 - x) * height * pixel_size + y * pixel_size + i;
-                        v[p1] = img_buf[p0];
+                        target[p1] = src[p0];
                     }
                 }
             }
 
-            ImgBuf::Vec(v)
+            frame.set_texture(FungibleMemory::from_vec(target));
+
+            frame
         }
         Rotation::_180 => {
             let mid_col = width / 2;
             let uneven_cols = width % 2 == 1;
+
+            let src = frame.texture_mut();
 
             for x in 0..width.div_ceil(2) {
                 let y_max = if uneven_cols && mid_col == x {
@@ -152,12 +189,12 @@ pub fn change_orientation(
                         let p0 = x * pixel_size + y * stride + i;
                         let p1 = (width - 1 - x) * pixel_size + (height - 1 - y) * stride + i;
 
-                        img_buf.swap(p0, p1);
+                        src.swap(p0, p1);
                     }
                 }
             }
 
-            img_buf
+            frame
         }
     }
 }

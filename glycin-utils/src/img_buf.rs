@@ -1,34 +1,25 @@
-use std::os::fd::{AsRawFd, RawFd};
-
-use crate::{DimensionTooLargerError, editing};
+use crate::{SharedMemory, editing};
 
 pub enum ImgBuf {
-    MMap {
-        mmap: memmap::MmapMut,
-        raw_fd: RawFd,
-    },
+    MMap(SharedMemory),
     Vec(Vec<u8>),
 }
 
 impl ImgBuf {
-    pub unsafe fn from_raw_fd(raw_fd: impl AsRawFd) -> std::io::Result<Self> {
-        let mmap = unsafe { memmap::MmapMut::map_mut(&raw_fd)? };
-        Ok(Self::MMap {
-            mmap,
-            raw_fd: raw_fd.as_raw_fd(),
-        })
+    pub fn from_shared_memory(shared_memory: SharedMemory) -> Self {
+        Self::MMap(shared_memory)
     }
 
     pub fn as_slice(&self) -> &[u8] {
         match self {
-            Self::MMap { mmap, .. } => mmap.as_ref(),
+            Self::MMap(m) => &m,
             Self::Vec(v) => v.as_slice(),
         }
     }
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         match self {
-            Self::MMap { mmap, .. } => mmap.as_mut(),
+            Self::MMap(m) => m.as_mut(),
             Self::Vec(v) => v.as_mut_slice(),
         }
     }
@@ -46,7 +37,8 @@ impl ImgBuf {
         }
 
         match self {
-            ImgBuf::MMap { mmap, raw_fd, .. } => {
+            ImgBuf::MMap(shared_memory) => {
+                /*
                 let borrowed_fd = unsafe { std::os::fd::BorrowedFd::borrow_raw(raw_fd) };
 
                 // This mmap would have the wrong size after ftruncate
@@ -62,6 +54,8 @@ impl ImgBuf {
                 let mmap = unsafe { memmap::MmapMut::map_mut(raw_fd) }?;
 
                 Ok(ImgBuf::MMap { mmap, raw_fd })
+                 */
+                todo!()
             }
             Self::Vec(mut vec) => {
                 vec.resize(new_len as usize, 0);

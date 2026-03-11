@@ -19,9 +19,10 @@ pub struct ImgDecoder {
 }
 
 pub struct ImgDecoderDetails {
-    frame_recv: Receiver<Result<RemoteFrame, ProcessError>>,
+    frame_recv: Receiver<Result<Frame<LocalMemory>, ProcessError>>,
     instr_send: Sender<Instruction>,
-    image_info: ImageDetails,
+    width: u32,
+    height: u32,
 }
 
 pub struct Instruction {
@@ -29,11 +30,11 @@ pub struct Instruction {
     area: Option<rsvg::Rectangle>,
 }
 
-pub fn thread(
+pub fn thread<B: ByteData>(
     stream: UnixStream,
     base_file: Option<gio::File>,
-    info_send: Sender<Result<ImageDetails, ProcessError>>,
-    frame_send: Sender<Result<RemoteFrame, ProcessError>>,
+    info_send: Sender<Result<ImageDetails<B>, ProcessError>>,
+    frame_send: Sender<Result<Frame<B>, ProcessError>>,
     instr_recv: Receiver<Instruction>,
 ) {
     let input_stream = gio_unix::InputStream::take_fd(stream.into());
@@ -91,7 +92,10 @@ pub fn thread(
     }
 }
 
-pub fn render(renderer: &rsvg::Handle, instr: Instruction) -> Result<RemoteFrame, ProcessError> {
+pub fn render<B: ByteData>(
+    renderer: &rsvg::Handle,
+    instr: Instruction,
+) -> Result<Frame<B>, ProcessError> {
     let (total_width, total_height) = instr.total_size;
     let area = instr
         .area
@@ -125,13 +129,9 @@ pub fn render(renderer: &rsvg::Handle, instr: Instruction) -> Result<RemoteFrame
     let stride = surface.stride() as usize;
 
     let data = surface.take_data().internal_error()?.to_vec();
+    let texture = B::try_from_slice(&data).expected_error()?;
 
-    let mut memory = SharedMemory::new(data.len().try_u64()?).expected_error()?;
-
-    Cursor::new(data).read_exact(&mut memory).expected_error()?;
-    let texture = memory.into_binary_data();
-
-    let mut frame = RemoteFrame::new(
+    let mut frame = Frame::new(
         width.try_u32()?,
         height.try_u32()?,
         memory_format(),
@@ -144,11 +144,11 @@ pub fn render(renderer: &rsvg::Handle, instr: Instruction) -> Result<RemoteFrame
 }
 
 impl LoaderImplementation for ImgDecoder {
-    fn init(
+    fn init<B: ByteData>(
         stream: UnixStream,
         _mime_type: String,
         details: InitializationDetails,
-    ) -> Result<(Self, ImageDetails), ProcessError> {
+    ) -> Result<(Self, ImageDetails<B>), ProcessError> {
         let (info_send, info_recv) = channel();
         let (frame_send, frame_recv) = channel();
         let (instr_send, instr_recv) = channel();
@@ -165,20 +165,23 @@ impl LoaderImplementation for ImgDecoder {
             thread: Mutex::new(Some(ImgDecoderDetails {
                 frame_recv,
                 instr_send,
-                image_info: image_info.clone(),
+                width: image_info.width,
+                height: image_info.height,
             })),
         };
 
-        Ok((decoder, image_info))
+        Ok((decoder, image_info.into_other().expected_error()?))
     }
 
-    fn frame(&mut self, frame_request: FrameRequest) -> Result<RemoteFrame, ProcessError> {
+    fn frame<B: ByteData>(
+        &mut self,
+        frame_request: FrameRequest,
+    ) -> Result<Frame<B>, ProcessError> {
         let lock = self.thread.lock().unwrap();
         let thread = lock.as_ref().internal_error()?;
 
-        let image_info = &thread.image_info;
-        let width = image_info.width;
-        let height = image_info.height;
+        let width = thread.width;
+        let height = thread.height;
 
         let total_size = frame_request.scale.unwrap_or((width, height));
         let area = if let Some(clip) = frame_request.clip {
@@ -196,7 +199,9 @@ impl LoaderImplementation for ImgDecoder {
 
         thread.instr_send.send(instr).unwrap();
 
-        thread.frame_recv.recv().unwrap()
+        let frame = thread.frame_recv.recv().unwrap().expected_error()?;
+
+        Ok(frame.into_other().internal_error()?)
     }
 }
 

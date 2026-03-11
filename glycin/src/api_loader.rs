@@ -4,9 +4,12 @@ use std::sync::{Arc, Mutex};
 use gio::glib;
 use gio::prelude::*;
 pub use glycin_common::MemoryFormat;
-use glycin_common::{BinaryData, MemoryFormatInfo, MemoryFormatSelection};
+use glycin_common::{MemoryFormatInfo, MemoryFormatSelection};
 use glycin_utils::safe_math::*;
-use glycin_utils::{ImgBuf, InitializationDetails, LoaderImplementation, RemoteFrame};
+use glycin_utils::{
+    ByteData, FungibleMemory, InitializationDetails, LoaderImplementation, RemoteFrame,
+    SharedMemory,
+};
 use gufo_common::cicp::Cicp;
 use gufo_common::math::ToI64;
 use gufo_common::orientation::{Orientation, Rotation};
@@ -155,14 +158,12 @@ impl Loader {
                     .await
                     .err_context(&process, &self.cancellable)?;
 
+                let mut details = remote_image.details.into_fungible();
+
                 if self.apply_transformations {
-                    match Image::transformation_orientation_internal(&remote_image.details).rotate()
-                    {
+                    match Image::transformation_orientation_internal(&details).rotate() {
                         Rotation::_90 | Rotation::_270 => {
-                            std::mem::swap(
-                                &mut remote_image.details.width,
-                                &mut remote_image.details.height,
-                            );
+                            std::mem::swap(&mut details.width, &mut details.height);
                         }
                         _ => {}
                     }
@@ -185,7 +186,7 @@ impl Loader {
                         usage_tracker: Mutex::new(Some(binary_loader.usage_tracker)),
                         frame_request: remote_image.frame_request,
                     }),
-                    details: Arc::new(remote_image.details),
+                    details: Arc::new(details),
                     loader: self,
                     mime_type: binary_loader.mime_type,
                 })
@@ -264,7 +265,7 @@ impl Loader {
 pub struct Image {
     pub(crate) loader: Loader,
     image_loader: ImageLoader,
-    details: Arc<glycin_utils::ImageDetails>,
+    details: Arc<glycin_utils::ImageDetails<FungibleMemory>>,
     mime_type: MimeType,
 }
 
@@ -302,10 +303,14 @@ impl Image {
                 let mut frame_request = glycin_utils::FrameRequest::default();
                 frame_request.loop_animation = true;
 
-                process
+                let frame = process
                     .request_frame(frame_request, self)
                     .await
-                    .err_context(&process, &self.cancellable())
+                    .err_context(&process, &self.cancellable())?;
+
+                Frame::from_loader(frame, &self)
+                    .await
+                    .err_no_context(&self.cancellable())
             }
             #[cfg(feature = "builtin")]
             ImageLoader::Builtin(builtin) => match builtin {
@@ -332,10 +337,14 @@ impl Image {
             ImageLoader::Binary(image_loader) => {
                 let process = image_loader.process.use_();
 
-                process
+                let frame = process
                     .request_frame(frame_request.request, self)
                     .await
-                    .err_context(&process, &self.cancellable())
+                    .err_context(&process, &self.cancellable())?;
+
+                Frame::from_loader(frame, &self)
+                    .await
+                    .err_no_context(&self.cancellable())
             }
             #[cfg(feature = "builtin")]
             ImageLoader::Builtin(builtin) => match builtin {
@@ -403,14 +412,16 @@ impl Image {
         Self::transformation_orientation_internal(&self.details)
     }
 
-    fn transformation_orientation_internal(details: &glycin_utils::ImageDetails) -> Orientation {
+    fn transformation_orientation_internal(
+        details: &glycin_utils::ImageDetails<FungibleMemory>,
+    ) -> Orientation {
         if let Some(orientation) = details.transformation_orientation {
             orientation
         } else if !details.transformation_ignore_exif {
             details
                 .metadata_exif
                 .as_ref()
-                .and_then(|x| x.get_full().ok())
+                .map(|x| x.to_vec())
                 .and_then(|x| match gufo_exif::Exif::new(x) {
                     Err(err) => {
                         tracing::warn!("exif: Failed to parse data: {err:?}");
@@ -455,11 +466,11 @@ impl std::fmt::Debug for ImageBuiltinLoader {
 
 #[derive(Debug, Clone)]
 pub struct ImageDetails {
-    inner: Arc<glycin_utils::ImageDetails>,
+    inner: Arc<glycin_utils::ImageDetails<FungibleMemory>>,
 }
 
 impl ImageDetails {
-    fn new(inner: Arc<glycin_utils::ImageDetails>) -> Self {
+    fn new(inner: Arc<glycin_utils::ImageDetails<FungibleMemory>>) -> Self {
         Self { inner }
     }
 
@@ -484,16 +495,16 @@ impl ImageDetails {
         self.inner.info_dimensions_text.as_deref()
     }
 
-    pub fn metadata_exif(&self) -> Option<BinaryData> {
-        self.inner.metadata_exif.clone()
+    pub fn metadata_exif(&self) -> Option<&[u8]> {
+        self.inner.metadata_exif.as_deref()
     }
 
     pub fn transformation_orientation(&self) -> Option<Orientation> {
         self.inner.transformation_orientation
     }
 
-    pub fn metadata_xmp(&self) -> Option<BinaryData> {
-        self.inner.metadata_xmp.clone()
+    pub fn metadata_xmp(&self) -> Option<&[u8]> {
+        self.inner.metadata_xmp.as_deref()
     }
 
     pub fn metadata_key_value(&self) -> Option<&std::collections::BTreeMap<String, String>> {
@@ -515,7 +526,7 @@ pub struct Frame {
     pub(crate) stride: u32,
     pub(crate) memory_format: MemoryFormat,
     pub(crate) delay: Option<std::time::Duration>,
-    pub(crate) details: Arc<glycin_utils::FrameDetails>,
+    pub(crate) details: Arc<glycin_utils::FrameDetails<SharedMemory>>,
     pub(crate) color_state: ColorState,
 }
 
@@ -585,43 +596,42 @@ impl Frame {
         image: &Image,
     ) -> Result<Self, Error> {
         // Seal all constant data
+        /*
         if let Some(icc_profile) = &frame.details.color_icc_profile {
             seal_fd(icc_profile).await?;
         }
+         */
 
-        let raw_fd = frame.texture.as_raw_fd();
-        let img_buf = unsafe { ImgBuf::from_raw_fd(raw_fd)? };
+        //let raw_fd = frame.texture.as_raw_fd();
 
-        validate_frame(&frame, &img_buf)?;
+        validate_frame(&frame)?;
 
-        let img_buf = if image.loader.apply_transformations {
-            orientation::apply_exif_orientation(img_buf, &mut frame, image)
+        //let img_buf = ImgBuf::from_shared_memory(frame.texture);
+
+        let frame = if image.loader.apply_transformations {
+            orientation::apply_exif_orientation(frame.into_fungible(), image)
         } else {
-            img_buf
+            frame.into_fungible()
         };
 
         let mut color_state = ColorState::Srgb;
 
-        let img_buf = if let Some(cicp) = frame
+        let frame = if let Some(cicp) = frame
             .details
             .color_cicp
             .and_then(|x| x.try_into().ok())
             .and_then(|x| Cicp::from_bytes(&x).ok())
         {
             color_state = ColorState::Cicp(cicp);
-            img_buf
-        } else if let Some(Ok(icc_profile)) =
-            frame.details.color_icc_profile.as_ref().map(|x| x.get())
+            frame
+        } else if let Some(icc_profile) =
+            frame.details.color_icc_profile.as_ref().map(|x| x.to_vec())
         {
             // Align stride with pixel size if necessary
-            let mut img_buf = remove_stride_if_needed(img_buf, &mut frame)?;
+            let frame = remove_stride_if_needed(frame)?;
 
-            let memory_format = frame.memory_format;
-            let (icc_mmap, icc_result) = spawn_blocking(move || {
-                let result = icc::apply_transformation(&icc_profile, memory_format, &mut img_buf);
-                (img_buf, result)
-            })
-            .await;
+            let (frame, icc_result) =
+                spawn_blocking(move || icc::apply_transformation(&icc_profile, frame)).await;
 
             match icc_result {
                 Err(err) => {
@@ -632,41 +642,32 @@ impl Frame {
                 }
             }
 
-            icc_mmap
+            frame
         } else {
-            img_buf
+            frame
         };
 
-        let (frame, img_buf) = if let Some(target_format) = image
+        let frame = if let Some(target_format) = image
             .loader
             .memory_format_selection
             .best_format_for(frame.memory_format)
         {
             util::spawn_blocking(move || {
-                glycin_utils::editing::change_memory_format(img_buf, frame, target_format)
+                glycin_utils::editing::change_memory_format(frame.into_fungible(), target_format)
             })
             .await?
         } else {
-            (frame, img_buf)
-        };
-
-        let bytes = match img_buf {
-            ImgBuf::MMap { mmap, raw_fd } => {
-                drop(mmap);
-                seal_fd(raw_fd).await?;
-                unsafe { gbytes_from_mmap(raw_fd)? }
-            }
-            ImgBuf::Vec(vec) => glib::Bytes::from_owned(vec),
+            frame.into_fungible()
         };
 
         Ok(Self {
-            buffer: bytes,
+            buffer: frame.texture.into_gbytes()?,
             width: frame.width,
             height: frame.height,
             stride: frame.stride,
             memory_format: frame.memory_format,
             delay: frame.delay.into(),
-            details: Arc::new(frame.details),
+            details: Arc::new(frame.details.into_other()?),
             color_state,
         })
     }
@@ -685,7 +686,9 @@ impl Default for FrameRequest {
     }
 }
 
-fn validate_frame(frame: &RemoteFrame, img_buf: &ImgBuf) -> Result<(), Error> {
+fn validate_frame(frame: &RemoteFrame) -> Result<(), Error> {
+    let img_buf = &frame.texture;
+
     if img_buf.len() < frame.n_bytes()? {
         return Err(Error::TextureWrongSize {
             texture_size: img_buf.len(),
@@ -713,10 +716,14 @@ fn validate_frame(frame: &RemoteFrame, img_buf: &ImgBuf) -> Result<(), Error> {
     Ok(())
 }
 
-fn remove_stride_if_needed(mut img_buf: ImgBuf, frame: &mut RemoteFrame) -> Result<ImgBuf, Error> {
+fn remove_stride_if_needed(
+    mut frame: glycin_utils::Frame<FungibleMemory>,
+) -> Result<glycin_utils::Frame<FungibleMemory>, Error> {
     if frame.stride.srem(frame.memory_format.n_bytes().u32())? == 0 {
-        return Ok(img_buf);
+        return Ok(frame);
     }
+
+    let img_buf = &mut frame.texture;
 
     let width = frame
         .width
@@ -730,7 +737,8 @@ fn remove_stride_if_needed(mut img_buf: ImgBuf, frame: &mut RemoteFrame) -> Resu
     }
     frame.stride = width.try_u32()?;
 
-    Ok(img_buf.resize(frame.n_bytes()?.i64()?)?)
+    //Ok(img_buf.resize(frame.n_bytes()?.i64()?)?)
+    todo!()
 }
 impl FrameRequest {
     pub fn new() -> Self {
@@ -762,11 +770,11 @@ impl FrameRequest {
 
 #[derive(Debug, Clone)]
 pub struct FrameDetails {
-    inner: Arc<glycin_utils::FrameDetails>,
+    inner: Arc<glycin_utils::FrameDetails<SharedMemory>>,
 }
 
 impl FrameDetails {
-    fn new(inner: Arc<glycin_utils::FrameDetails>) -> Self {
+    fn new(inner: Arc<glycin_utils::FrameDetails<SharedMemory>>) -> Self {
         Self { inner }
     }
 
@@ -776,8 +784,8 @@ impl FrameDetails {
             .and_then(|x| crate::Cicp::from_bytes(&x).ok())
     }
 
-    pub fn color_icc_profile(&self) -> Option<BinaryData> {
-        self.inner.color_icc_profile.clone()
+    pub fn color_icc_profile(&self) -> Option<&[u8]> {
+        self.inner.color_icc_profile.as_deref()
     }
 
     pub fn info_alpha_channel(&self) -> Option<bool> {

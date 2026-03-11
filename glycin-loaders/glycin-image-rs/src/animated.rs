@@ -27,7 +27,7 @@ pub fn worker(format: ImageRsFormat<Reader>, data: Reader, mime_type: String, se
             let _result = webp.set_background_color(image::Rgba::from([0, 0, 0, 0]));
         }
 
-        let frame_details = match format.as_mut().unwrap().frame_details() {
+        let frame_details = match format.as_mut().unwrap().frame_details::<LocalMemory>() {
             Ok(frame_details) => Some(frame_details),
             Err(err) => {
                 send.send(Err(err)).unwrap();
@@ -63,7 +63,11 @@ pub fn worker(format: ImageRsFormat<Reader>, data: Reader, mime_type: String, se
         for frame in first_frames.into_iter().chain(frames).enumerate() {
             // Only use FrameDetails for still images because they might not make too much
             // sense otherwise
-            let frame_details = (!is_animated).then(|| frame_details.clone()).flatten();
+            let frame_details = (!is_animated).then(|| {
+                let mut new_frame_details = FrameDetails::default();
+                //new_frame_details.info_alpha_channel = frame_details.info_alpha_channel;
+                new_frame_details
+            });
 
             let decoded_frame = animated_get_frame(frame, frame_details, is_animated);
             send.send(decoded_frame.map(|x| (x, looped))).unwrap();
@@ -81,11 +85,11 @@ pub fn worker(format: ImageRsFormat<Reader>, data: Reader, mime_type: String, se
     }
 }
 
-pub fn animated_get_frame(
+pub fn animated_get_frame<B: ByteData>(
     (n_frame, frame): (usize, Result<image::Frame, image::ImageError>),
-    frame_details: Option<FrameDetails>,
+    frame_details: Option<FrameDetails<B>>,
     is_animated: bool,
-) -> Result<RemoteFrame, ProcessError> {
+) -> Result<Frame<B>, ProcessError> {
     log::trace!("animated: Treating decoded frame {n_frame}");
     let frame = frame.expected_error()?;
 
@@ -107,16 +111,14 @@ pub fn animated_get_frame(
     let width = buffer.width();
     let height = buffer.height();
 
-    let mut memory =
-        SharedMemory::new(u64::from(width) * u64::from(height) * memory_format.n_bytes().u64())
-            .expected_error()
-            .unwrap();
-    Cursor::new(buffer.into_raw())
-        .read_exact(&mut memory)
+    let mut texture = B::new(u64::from(width) * u64::from(height) * memory_format.n_bytes().u64())
+        .expected_error()
         .unwrap();
-    let texture = memory.into_binary_data();
+    Cursor::new(buffer.into_raw())
+        .read_exact(&mut texture)
+        .unwrap();
 
-    let mut out_frame = RemoteFrame::new(width, height, memory_format, texture).unwrap();
+    let mut out_frame = Frame::new(width, height, memory_format, texture).unwrap();
     out_frame.delay = delay.into();
 
     // Set frame info for still pictures

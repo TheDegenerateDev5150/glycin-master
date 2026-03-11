@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use glib::object::IsA;
 use glib::prelude::*;
-use glycin_common::{BinaryData, MemoryFormatInfo};
-use glycin_utils::{DimensionTooLargerError, MemoryFormat};
+use glycin_common::MemoryFormatInfo;
+use glycin_utils::{ByteData, DimensionTooLargerError, MemoryFormat, SharedMemory};
 
 use crate::config::{Config, ImageEditorConfig};
 use crate::error::ResultExt;
@@ -19,7 +19,7 @@ pub struct Creator {
     pub(crate) cancellable: gio::Cancellable,
     pub(crate) sandbox_selector: SandboxSelector,
     encoding_options: glycin_utils::EncodingOptions,
-    new_image: glycin_utils::NewImage,
+    new_image: glycin_utils::NewImage<SharedMemory>,
 
     new_frames: Vec<Arc<NewFrame>>,
 }
@@ -149,11 +149,13 @@ impl Creator {
 
         let mut new_image = self.new_image;
 
+        /*
         for frame in self.new_frames {
             new_image
                 .frames
                 .push((frame).frame().err_no_context(&self.cancellable)?);
         }
+         */
 
         Ok(EncodedImage::new(
             process
@@ -241,7 +243,7 @@ pub struct NewFrame {
     memory_format: MemoryFormat,
     texture: Vec<u8>,
     //delay: Option<Duration>,
-    details: glycin_utils::FrameDetails,
+    details: glycin_utils::FrameDetails<SharedMemory>,
     icc_profile: Mutex<Option<Vec<u8>>>,
 }
 
@@ -278,15 +280,15 @@ impl NewFrame {
         Ok(())
     }
 
-    fn frame(&self) -> Result<glycin_utils::RemoteFrame, Error> {
-        let texture = BinaryData::from_data(&self.texture)?;
+    fn frame(self) -> Result<glycin_utils::RemoteFrame, Error> {
+        let texture = SharedMemory::try_from_vec(self.texture)?;
         let mut frame =
             glycin_utils::RemoteFrame::new(self.width, self.height, self.memory_format, texture)?;
 
-        frame.details = self.details.clone();
+        frame.details = self.details;
 
         if let Some(icc_profile) = self.icc_profile.lock().unwrap().as_ref() {
-            let icc_profile = BinaryData::from_data(icc_profile)?;
+            let icc_profile = SharedMemory::try_from_slice(icc_profile)?;
             frame.details.color_icc_profile = Some(icc_profile);
         }
 
@@ -296,19 +298,19 @@ impl NewFrame {
 
 #[derive(Debug)]
 pub struct EncodedImage {
-    pub(crate) inner: glycin_utils::EncodedImage,
+    pub(crate) inner: glycin_utils::EncodedImage<SharedMemory>,
 }
 
 impl EncodedImage {
-    pub fn new(inner: glycin_utils::EncodedImage) -> Self {
+    pub fn new(inner: glycin_utils::EncodedImage<SharedMemory>) -> Self {
         Self { inner }
     }
 
-    pub fn data_ref(&self) -> Result<glycin_common::BinaryDataRef, std::io::Error> {
-        self.inner.data.get()
+    pub fn data_ref(&self) -> Result<&[u8], std::io::Error> {
+        todo!()
     }
 
     pub fn data_full(&self) -> Result<Vec<u8>, std::io::Error> {
-        self.inner.data.get_full()
+        todo!()
     }
 }

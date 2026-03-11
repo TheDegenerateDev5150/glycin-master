@@ -24,10 +24,10 @@ impl EditorImplementation for ImgEditor {
         })
     }
 
-    fn apply_sparse(
+    fn apply_sparse<B: ByteData>(
         &self,
         operations: Operations,
-    ) -> Result<SparseEditorOutput, glycin_utils::ProcessError> {
+    ) -> Result<SparseEditorOutput<B>, glycin_utils::ProcessError> {
         match self {
             Self::Jpeg(jpeg) => Ok(jpeg::apply_sparse(jpeg, operations)?),
             _ => Ok(SparseEditorOutput::from(Self::apply_complete(
@@ -36,18 +36,21 @@ impl EditorImplementation for ImgEditor {
         }
     }
 
-    fn apply_complete(&self, operations: Operations) -> Result<CompleteEditorOutput, ProcessError> {
+    fn apply_complete<B: ByteData>(
+        &self,
+        operations: Operations,
+    ) -> Result<CompleteEditorOutput<B>, ProcessError> {
         match self {
             Self::Png(png) => png::apply(png, operations),
             Self::Jpeg(jpeg) => jpeg::apply_complete(jpeg, operations),
         }
     }
 
-    fn create(
+    fn create<B: ByteData>(
         mime_type: String,
-        mut new_image: NewImage,
+        mut new_image: NewImage<B>,
         encoding_options: EncodingOptions,
-    ) -> Result<EncodedImage, ProcessError> {
+    ) -> Result<EncodedImage<B>, ProcessError> {
         let frame = new_image.frames.remove(0);
 
         let image_format = image_format(&mime_type)?;
@@ -63,19 +66,13 @@ impl EditorImplementation for ImgEditor {
             .best_format_for(frame.memory_format)
             .internal_error()?;
 
-        let v = frame.texture.get_full().expected_error()?;
-        let img_buf = ImgBuf::Vec(v);
-        let (frame, img_buf) =
-            glycin_utils::editing::change_memory_format(img_buf, frame, memory_format)
+        let frame =
+            glycin_utils::editing::change_memory_format(frame.into_fungible(), memory_format)
                 .expected_error()?;
 
         let memory_format = image_memory_format(memory_format)?;
 
-        let icc_profile = frame.details.color_icc_profile.as_ref().and_then(|x| {
-            x.get_full()
-                .inspect_err(|err| log::error!("Can't read the ICC profile {err}"))
-                .ok()
-        });
+        let icc_profile = frame.details.color_icc_profile.as_ref().map(|x| x.to_vec());
 
         let image_buf = match image_format {
             ImageFormat::Png => {
@@ -102,8 +99,10 @@ impl EditorImplementation for ImgEditor {
                     let _ = encoder.set_icc_profile(icc_profile);
                 }
 
+                //let frame = frame.into_other::<B>()?;
+
                 encoder
-                    .write_image(&img_buf, frame.width, frame.height, memory_format)
+                    .write_image(&frame.texture, frame.width, frame.height, memory_format)
                     .internal_error()?;
 
                 png::add_metadata(out_buf, &new_image.image_info, &frame.details)
@@ -123,7 +122,7 @@ impl EditorImplementation for ImgEditor {
                 }
 
                 encoder
-                    .write_image(&img_buf, frame.width, frame.height, memory_format)
+                    .write_image(&frame.texture, frame.width, frame.height, memory_format)
                     .internal_error()?;
 
                 out_buf
@@ -132,7 +131,7 @@ impl EditorImplementation for ImgEditor {
                 let mut cur = Cursor::new(Vec::new());
                 image::write_buffer_with_format(
                     &mut cur,
-                    &img_buf,
+                    &frame.texture,
                     frame.width,
                     frame.height,
                     memory_format,
@@ -144,7 +143,7 @@ impl EditorImplementation for ImgEditor {
             }
         };
 
-        let data = BinaryData::from_data(image_buf).expected_error()?;
+        let data = B::try_from_vec(image_buf).expected_error()?;
         Ok(EncodedImage::new(data))
     }
 }

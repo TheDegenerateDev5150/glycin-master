@@ -17,7 +17,7 @@ use glycin_common::Operations;
 use glycin_utils::{
     CompleteEditorOutput, EditRequest, EncodedImage, EncodingOptions, FrameRequest, InitRequest,
     InitializationDetails, NewImage, RemoteEditableImage, RemoteError, RemoteFrame, RemoteImage,
-    SparseEditorOutput,
+    SharedMemory, SparseEditorOutput,
 };
 use nix::sys::signal;
 use zbus::zvariant::{self, OwnedObjectPath};
@@ -269,7 +269,7 @@ impl RemoteProcess<LoaderProxy<'static>> {
         &self,
         gfile_worker: GFileWorker,
         mime_type: &MimeType,
-    ) -> Result<RemoteImage, Error> {
+    ) -> Result<RemoteImage<SharedMemory>, Error> {
         let init_request = self.init_request(&gfile_worker, mime_type)?;
 
         let image_info = self.proxy.init(init_request).fuse();
@@ -291,10 +291,10 @@ impl RemoteProcess<LoaderProxy<'static>> {
 
         // Seal all memfds
         if let Some(exif) = &image_info.details.metadata_exif {
-            seal_fd(exif).await?;
+            exif.seal().await.unwrap();
         }
         if let Some(xmp) = &image_info.details.metadata_xmp {
-            seal_fd(xmp).await?;
+            xmp.seal().await.unwrap();
         }
 
         Ok(image_info)
@@ -314,7 +314,7 @@ impl RemoteProcess<LoaderProxy<'static>> {
         &self,
         frame_request: FrameRequest,
         image: &Image,
-    ) -> Result<api_loader::Frame, Error> {
+    ) -> Result<glycin_utils::Frame<SharedMemory>, Error> {
         let frame_request_path = image.frame_request_path();
 
         let loader_proxy = LoaderStateProxy::builder(&self.dbus_connection)
@@ -323,9 +323,7 @@ impl RemoteProcess<LoaderProxy<'static>> {
             .build()
             .await?;
 
-        let frame = loader_proxy.frame(frame_request).await?;
-
-        api_loader::Frame::from_loader(frame, image).await
+        loader_proxy.frame(frame_request).await.map_err(Into::into)
     }
 }
 
@@ -333,9 +331,9 @@ impl RemoteProcess<EditorProxy<'static>> {
     pub async fn create(
         &self,
         mime_type: &MimeType,
-        new_image: NewImage,
+        new_image: NewImage<SharedMemory>,
         encoding_options: EncodingOptions,
-    ) -> Result<EncodedImage, Error> {
+    ) -> Result<EncodedImage<SharedMemory>, Error> {
         self.proxy
             .create(mime_type.to_string(), new_image, encoding_options)
             .await
@@ -356,7 +354,7 @@ impl RemoteProcess<EditorProxy<'static>> {
         &self,
         operations: &Operations,
         editable_image: &EditableImage,
-    ) -> Result<SparseEditorOutput, Error> {
+    ) -> Result<SparseEditorOutput<SharedMemory>, Error> {
         let editor_proxy = EditableImageProxy::builder(&self.dbus_connection)
             .destination("org.gnome.glycin")?
             .path(editable_image.edit_request_path())?
@@ -375,7 +373,7 @@ impl RemoteProcess<EditorProxy<'static>> {
         &self,
         operations: &Operations,
         editable_image: &EditableImage,
-    ) -> Result<CompleteEditorOutput, Error> {
+    ) -> Result<CompleteEditorOutput<SharedMemory>, Error> {
         let editor_proxy = EditableImageProxy::builder(&self.dbus_connection)
             .destination("org.gnome.glycin")?
             .path(editable_image.edit_request_path())?
@@ -412,7 +410,10 @@ const BUF_SIZE: usize = u16::MAX as usize;
 
 #[zbus::proxy(interface = "org.gnome.glycin.Loader")]
 pub trait Loader {
-    async fn init(&self, init_request: InitRequest) -> Result<RemoteImage, RemoteError>;
+    async fn init(
+        &self,
+        init_request: InitRequest,
+    ) -> Result<RemoteImage<SharedMemory>, RemoteError>;
 }
 
 #[zbus::proxy(name = "org.gnome.glycin.Image")]
@@ -429,9 +430,9 @@ pub trait Editor {
     async fn create(
         &self,
         mime_type: String,
-        new_image: NewImage,
+        new_image: NewImage<SharedMemory>,
         encoding_options: EncodingOptions,
-    ) -> Result<EncodedImage, RemoteError>;
+    ) -> Result<EncodedImage<SharedMemory>, RemoteError>;
 
     async fn edit(&self, init_request: InitRequest) -> Result<RemoteEditableImage, RemoteError>;
 }
@@ -441,12 +442,12 @@ pub trait EditableImage {
     async fn apply_sparse(
         &self,
         edit_request: EditRequest,
-    ) -> Result<SparseEditorOutput, RemoteError>;
+    ) -> Result<SparseEditorOutput<SharedMemory>, RemoteError>;
 
     async fn apply_complete(
         &self,
         edit_request: EditRequest,
-    ) -> Result<CompleteEditorOutput, RemoteError>;
+    ) -> Result<CompleteEditorOutput<SharedMemory>, RemoteError>;
 
     async fn done(&self) -> Result<(), RemoteError>;
 }

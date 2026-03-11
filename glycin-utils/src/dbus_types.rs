@@ -1,17 +1,16 @@
 use std::collections::BTreeMap;
-use std::os::fd::AsRawFd;
 use std::time::Duration;
 
-use glycin_common::{BinaryData, MemoryFormat, MemoryFormatInfo};
+use glycin_common::{MemoryFormat, MemoryFormatInfo};
 use gufo_common::orientation::Orientation;
-use memmap::MmapMut;
 use serde::{Deserialize, Serialize};
 use zbus::zvariant::as_value::{self, optional};
 use zbus::zvariant::{self, DeserializeDict, Optional, SerializeDict, Type};
 
-use crate::ImgBuf;
 use crate::error::DimensionTooLargerError;
 use crate::safe_math::{SafeConversion, SafeMath};
+use crate::shared_memory::{self, FungibleMemory};
+use crate::{ByteData, MemoryAllocationError, SharedMemory};
 
 #[derive(Deserialize, Serialize, Type, Debug)]
 pub struct InitRequest {
@@ -50,14 +49,15 @@ pub struct FrameRequest {
 /// Various image metadata
 ///
 /// This is returned from the initial `InitRequest` call
-#[derive(Deserialize, Serialize, Type, Debug, Clone)]
-pub struct RemoteImage {
+#[derive(Deserialize, Serialize, Type, Debug)]
+#[serde(bound(deserialize = "B: ByteData"))]
+pub struct RemoteImage<B: ByteData> {
     pub frame_request: zvariant::OwnedObjectPath,
-    pub details: ImageDetails,
+    pub details: ImageDetails<B>,
 }
 
-impl RemoteImage {
-    pub fn new(details: ImageDetails, frame_request: zvariant::OwnedObjectPath) -> Self {
+impl<B: ByteData> RemoteImage<B> {
+    pub fn new(details: ImageDetails<B>, frame_request: zvariant::OwnedObjectPath) -> Self {
         Self {
             frame_request,
             details,
@@ -65,31 +65,70 @@ impl RemoteImage {
     }
 }
 
-#[derive(DeserializeDict, SerializeDict, Type, Debug, Clone, Default)]
+#[derive(Deserialize, Serialize, Type, Debug)]
 #[zvariant(signature = "dict")]
+#[serde(bound(deserialize = "B: ByteData"))]
 #[non_exhaustive]
-pub struct ImageDetails {
+pub struct ImageDetails<B: ByteData> {
     /// Early dimension information.
     ///
     /// This information is often correct. However, it should only be used for
     /// an early rendering estimates. For everything else, the specific frame
     /// information should be used.
+    #[serde(with = "as_value")]
     pub width: u32,
+    #[serde(with = "as_value")]
     pub height: u32,
     /// Image dimensions in inch
+    #[serde(
+        with = "as_value::optional",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
     pub dimensions_inch: Option<(f64, f64)>,
+    #[serde(
+        with = "as_value::optional",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
     pub info_format_name: Option<String>,
     /// Textual description of the image dimensions
+    #[serde(
+        with = "as_value::optional",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
     pub info_dimensions_text: Option<String>,
-    pub metadata_exif: Option<BinaryData>,
-    pub metadata_xmp: Option<BinaryData>,
+    #[serde(
+        with = "as_value::optional",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub metadata_exif: Option<B>,
+    #[serde(
+        with = "as_value::optional",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub metadata_xmp: Option<B>,
+    #[serde(
+        with = "as_value::optional",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
     pub metadata_key_value: Option<BTreeMap<String, String>>,
+    #[serde(with = "as_value")]
     pub transformation_ignore_exif: bool,
     /// Explicit orientation. If `None` check Exif or XMP.
+    #[serde(
+        with = "as_value::optional",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
     pub transformation_orientation: Option<Orientation>,
 }
 
-impl ImageDetails {
+impl<B: ByteData> ImageDetails<B> {
     pub fn new(width: u32, height: u32) -> Self {
         Self {
             width,
@@ -104,61 +143,75 @@ impl ImageDetails {
             transformation_orientation: None,
         }
     }
+
+    pub fn into_fungible(self) -> ImageDetails<FungibleMemory> {
+        ImageDetails {
+            width: self.width,
+            height: self.height,
+            dimensions_inch: self.dimensions_inch,
+            info_format_name: self.info_format_name,
+            info_dimensions_text: self.info_dimensions_text,
+            metadata_exif: self.metadata_exif.map(B::into_fungible),
+            metadata_xmp: self.metadata_xmp.map(B::into_fungible),
+            metadata_key_value: self.metadata_key_value,
+            transformation_ignore_exif: self.transformation_ignore_exif,
+            transformation_orientation: self.transformation_orientation,
+        }
+    }
+
+    pub fn into_other<O: ByteData>(self) -> Result<ImageDetails<O>, MemoryAllocationError> {
+        Ok(ImageDetails {
+            width: self.width,
+            height: self.height,
+            dimensions_inch: self.dimensions_inch,
+            info_format_name: self.info_format_name,
+            info_dimensions_text: self.info_dimensions_text,
+            metadata_exif: self.metadata_exif.map(|x| x.into_other()).transpose()?,
+            metadata_xmp: self.metadata_xmp.map(|x| x.into_other()).transpose()?,
+            metadata_key_value: self.metadata_key_value,
+            transformation_ignore_exif: self.transformation_ignore_exif,
+            transformation_orientation: self.transformation_orientation,
+        })
+    }
 }
 
-pub type RemoteFrame = Frame<BinaryData>;
+impl<B: ByteData> Default for FrameDetails<B> {
+    fn default() -> Self {
+        Self {
+            color_icc_profile: None,
+            color_cicp: None,
+            info_bit_depth: None,
+            info_alpha_channel: None,
+            info_grayscale: None,
+            n_frame: None,
+        }
+    }
+}
+
+pub type RemoteFrame = Frame<SharedMemory>;
 
 #[derive(Deserialize, Serialize, Type, Debug)]
-pub struct Frame<D: zvariant::Type> {
+#[serde(bound(deserialize = "B: ByteData"))]
+pub struct Frame<B: ByteData> {
     pub width: u32,
     pub height: u32,
     /// Line stride
     pub stride: u32,
     pub memory_format: MemoryFormat,
-    pub texture: D,
+    pub texture: B,
     /// Duration to show frame for animations.
     ///
     /// If the value is not set, the image is not animated.
     pub delay: Optional<Duration>,
-    pub details: FrameDetails,
+    pub details: FrameDetails<B>,
 }
 
-impl Frame<BinaryData> {
-    pub fn n_bytes(&self) -> Result<usize, DimensionTooLargerError> {
-        self.stride.try_usize()?.smul(self.height.try_usize()?)
-    }
-}
-
-#[derive(DeserializeDict, SerializeDict, Type, Debug, Default, Clone)]
-#[zvariant(signature = "dict")]
-#[non_exhaustive]
-/// More information about a frame
-pub struct FrameDetails {
-    /// ICC color profile
-    pub color_icc_profile: Option<BinaryData>,
-    /// Coding-independent code points (HDR information)
-    pub color_cicp: Option<[u8; 4]>,
-    /// Bit depth per channel
-    ///
-    /// Only set if it can differ for the format
-    pub info_bit_depth: Option<u8>,
-    /// Image has alpha channel
-    ///
-    /// Only set if it can differ for the format
-    pub info_alpha_channel: Option<bool>,
-    /// Image uses grayscale mode
-    ///
-    /// Only set if it can differ for the format
-    pub info_grayscale: Option<bool>,
-    pub n_frame: Option<u64>,
-}
-
-impl RemoteFrame {
+impl<B: ByteData> Frame<B> {
     pub fn new(
         width: u32,
         height: u32,
         memory_format: MemoryFormat,
-        texture: BinaryData,
+        texture: B,
     ) -> Result<Self, DimensionTooLargerError> {
         let stride = memory_format
             .n_bytes()
@@ -176,16 +229,113 @@ impl RemoteFrame {
             details: Default::default(),
         })
     }
+
+    pub fn n_bytes(&self) -> Result<usize, DimensionTooLargerError> {
+        self.stride.try_usize()?.smul(self.height.try_usize()?)
+    }
+
+    pub fn into_fungible(self) -> Frame<FungibleMemory> {
+        Frame {
+            width: self.width,
+            height: self.height,
+            stride: self.stride,
+            memory_format: self.memory_format,
+            texture: self.texture.into_fungible(),
+            delay: self.delay,
+            details: self.details.into_fungible(),
+        }
+    }
+
+    pub fn into_other<O: ByteData>(self) -> Result<Frame<O>, shared_memory::MemoryAllocationError> {
+        Ok(Frame {
+            width: self.width,
+            height: self.height,
+            stride: self.stride,
+            memory_format: self.memory_format,
+            texture: self.texture.into_other()?,
+            delay: self.delay,
+            details: self.details.into_other()?,
+        })
+    }
 }
 
-impl RemoteFrame {
-    pub fn as_img_buf(&self) -> std::io::Result<ImgBuf> {
-        let raw_fd = self.texture.as_raw_fd();
-        let original_mmap = unsafe { MmapMut::map_mut(raw_fd) }?;
+#[derive(Deserialize, Serialize, Type, Debug)]
+#[zvariant(signature = "dict")]
+#[serde(bound(deserialize = "B: ByteData"))]
+#[non_exhaustive]
+/// More information about a frame
+pub struct FrameDetails<B: ByteData> {
+    /// ICC color profile
+    #[serde(
+        with = "as_value::optional",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub color_icc_profile: Option<B>,
+    /// Coding-independent code points (HDR information)
+    #[serde(
+        with = "as_value::optional",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub color_cicp: Option<[u8; 4]>,
+    /// Bit depth per channel
+    ///
+    /// Only set if it can differ for the format
+    #[serde(
+        with = "as_value::optional",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub info_bit_depth: Option<u8>,
+    /// Image has alpha channel
+    ///
+    /// Only set if it can differ for the format
+    #[serde(
+        with = "as_value::optional",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub info_alpha_channel: Option<bool>,
+    /// Image uses grayscale mode
+    ///
+    /// Only set if it can differ for the format
+    #[serde(
+        with = "as_value::optional",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub info_grayscale: Option<bool>,
+    #[serde(
+        with = "as_value::optional",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub n_frame: Option<u64>,
+}
 
-        Ok(ImgBuf::MMap {
-            mmap: original_mmap,
-            raw_fd,
+impl<B: ByteData> FrameDetails<B> {
+    pub fn into_fungible(self) -> FrameDetails<FungibleMemory> {
+        FrameDetails {
+            color_icc_profile: self.color_icc_profile.map(B::into_fungible),
+            color_cicp: self.color_cicp,
+            info_bit_depth: self.info_bit_depth,
+            info_alpha_channel: self.info_alpha_channel,
+            info_grayscale: self.info_grayscale,
+            n_frame: self.n_frame,
+        }
+    }
+
+    pub fn into_other<O: ByteData>(
+        self,
+    ) -> Result<FrameDetails<O>, shared_memory::MemoryAllocationError> {
+        Ok(FrameDetails {
+            color_icc_profile: self.color_icc_profile.map(B::into_other).transpose()?,
+            color_cicp: self.color_cicp,
+            info_bit_depth: self.info_bit_depth,
+            info_alpha_channel: self.info_alpha_channel,
+            info_grayscale: self.info_grayscale,
+            n_frame: self.n_frame,
         })
     }
 }
@@ -204,16 +354,18 @@ impl RemoteEditableImage {
     }
 }
 
-#[derive(DeserializeDict, SerializeDict, Type, Debug)]
+#[derive(Deserialize, Serialize, Type, Debug)]
 #[zvariant(signature = "dict")]
 #[non_exhaustive]
-pub struct NewImage {
-    pub image_info: ImageDetails,
-    pub frames: Vec<RemoteFrame>,
+pub struct NewImage<B: ByteData> {
+    #[serde(with = "as_value")]
+    pub image_info: ImageDetails<B>,
+    #[serde(with = "as_value")]
+    pub frames: Vec<Frame<B>>,
 }
 
-impl NewImage {
-    pub fn new(image_info: ImageDetails, frames: Vec<RemoteFrame>) -> Self {
+impl<B: ByteData> NewImage<B> {
+    pub fn new(image_info: ImageDetails<B>, frames: Vec<Frame<B>>) -> Self {
         Self { image_info, frames }
     }
 }
@@ -226,15 +378,17 @@ pub struct EncodingOptions {
     pub compression: Option<u8>,
 }
 
-#[derive(DeserializeDict, SerializeDict, Type, Debug)]
+#[derive(Deserialize, Serialize, Type, Debug)]
 #[zvariant(signature = "dict")]
+#[serde(bound(deserialize = "B: ByteData"))]
 #[non_exhaustive]
-pub struct EncodedImage {
-    pub data: BinaryData,
+pub struct EncodedImage<B: ByteData> {
+    #[serde(with = "as_value")]
+    pub data: B,
 }
 
-impl EncodedImage {
-    pub fn new(data: BinaryData) -> Self {
+impl<B: ByteData> EncodedImage<B> {
+    pub fn new(data: B) -> Self {
         Self { data }
     }
 }

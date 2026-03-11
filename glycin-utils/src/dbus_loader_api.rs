@@ -10,15 +10,17 @@ use zbus::zvariant::OwnedObjectPath;
 
 use crate::dbus_types::*;
 use crate::error::*;
+use crate::{ByteData, SharedMemory};
 
 pub trait LoaderImplementation: Send + Sync + Sized + 'static {
-    fn init(
+    fn init<B: ByteData>(
         stream: UnixStream,
         mime_type: String,
         details: InitializationDetails,
-    ) -> Result<(Self, ImageDetails), ProcessError>;
+    ) -> Result<(Self, ImageDetails<B>), ProcessError>;
 
-    fn frame(&mut self, frame_request: FrameRequest) -> Result<RemoteFrame, ProcessError>;
+    fn frame<T: ByteData>(&mut self, frame_request: FrameRequest)
+    -> Result<Frame<T>, ProcessError>;
 }
 
 pub struct Loader<T: LoaderImplementation> {
@@ -32,7 +34,7 @@ impl<T: LoaderImplementation> Loader<T> {
         &self,
         init_request: InitRequest,
         #[zbus(connection)] dbus_connection: &zbus::Connection,
-    ) -> Result<RemoteImage, RemoteError> {
+    ) -> Result<RemoteImage<SharedMemory>, RemoteError> {
         let fd = OwnedFd::from(init_request.fd);
         let stream = UnixStream::from(fd);
 

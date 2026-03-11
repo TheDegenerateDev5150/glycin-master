@@ -1,13 +1,19 @@
 use glycin_common::{MemoryFormat, MemoryFormatInfo};
+use glycin_utils::FungibleMemory;
 
 use crate::{ColorState, Error};
 
 pub fn apply_transformation(
     icc_profile: &[u8],
-    memory_format: MemoryFormat,
-    mmap: &mut [u8],
-) -> Result<ColorState, Error> {
-    transform(icc_profile, memory_format, mmap).map_err(Into::into)
+    mut frame: glycin_utils::Frame<FungibleMemory>,
+) -> (
+    glycin_utils::Frame<FungibleMemory>,
+    Result<ColorState, Error>,
+) {
+    match transform(icc_profile, frame.memory_format, &mut frame.texture) {
+        Err(err) => (frame, Err(err.into())),
+        Ok(color_state) => (frame, Ok(color_state)),
+    }
 }
 
 fn transformation<P: lcms2::Pod>(

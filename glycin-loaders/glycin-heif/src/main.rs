@@ -22,11 +22,11 @@ pub struct ImgDecoder {
 unsafe impl Sync for ImgDecoder {}
 
 impl LoaderImplementation for ImgDecoder {
-    fn init(
+    fn init<B: ByteData>(
         mut stream: UnixStream,
         mime_type: String,
         _details: InitializationDetails,
-    ) -> Result<(Self, ImageDetails), ProcessError> {
+    ) -> Result<(Self, ImageDetails<B>), ProcessError> {
         let mut data = Vec::new();
         let total_size = stream.read_to_end(&mut data).internal_error()?;
 
@@ -43,7 +43,7 @@ impl LoaderImplementation for ImgDecoder {
 
         let mut image_info = ImageDetails::new(handle.width(), handle.height());
         image_info.metadata_exif = exif(&handle)
-            .map(BinaryData::from_data)
+            .map(B::try_from_vec)
             .transpose()
             .expected_error()?;
         image_info.info_format_name = Some(format_name.to_string());
@@ -59,12 +59,15 @@ impl LoaderImplementation for ImgDecoder {
         Ok((decoder, image_info))
     }
 
-    fn frame(&mut self, _frame_request: FrameRequest) -> Result<RemoteFrame, ProcessError> {
+    fn frame<B: ByteData>(
+        &mut self,
+        _frame_request: FrameRequest,
+    ) -> Result<Frame<B>, ProcessError> {
         decode(self.decoder.take().unwrap(), &self.mime_type)
     }
 }
 
-fn decode(context: HeifContext, mime_type: &str) -> Result<RemoteFrame, ProcessError> {
+fn decode<B: ByteData>(context: HeifContext, mime_type: &str) -> Result<Frame<B>, ProcessError> {
     let handle = context.primary_image_handle().expected_error()?;
 
     let rgb_chroma = if handle.luma_bits_per_pixel() > 8 {
@@ -149,15 +152,12 @@ fn decode(context: HeifContext, mime_type: &str) -> Result<RemoteFrame, ProcessE
         RgbChroma::C444 => unreachable!(),
     };
 
-    let mut memory =
-        SharedMemory::new(plane.stride.try_u64()? * u64::from(plane.height)).expected_error()?;
-    Cursor::new(plane.data).read_exact(&mut memory).unwrap();
-    let texture = memory.into_binary_data();
+    let texture = B::try_from_slice(plane.data).expected_error()?;
 
-    let mut frame = RemoteFrame::new(plane.width, plane.height, memory_format, texture)?;
+    let mut frame = Frame::new(plane.width, plane.height, memory_format, texture)?;
     frame.stride = plane.stride.try_u32()?;
     frame.details.color_icc_profile = icc_profile
-        .map(BinaryData::from_data)
+        .map(B::try_from_vec)
         .transpose()
         .expected_error()?;
     frame.details.color_cicp = cicp.map(|x| x.to_bytes());

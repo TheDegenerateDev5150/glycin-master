@@ -5,13 +5,12 @@ use glycin_utils::{image_rs, *};
 use gufo::png::NewChunk;
 use gufo_common::error::ErrorWithData;
 use gufo_exif::internal::ExifRaw;
-use image::{ImageDecoder, ImageEncoder};
+use image::ImageEncoder;
 
 pub struct EditorPng {
     png: gufo::png::Png,
     metadata: gufo::Metadata,
-    frame_buf: Vec<u8>,
-    editing_frame: glycin_utils::editing::EditingFrame,
+    editing_frame: glycin_utils::editing::EditingFrame<LocalMemory>,
 }
 
 pub fn load(mut stream: glycin_utils::UnixStream) -> Result<EditorPng, glycin_utils::ProcessError> {
@@ -22,10 +21,8 @@ pub fn load(mut stream: glycin_utils::UnixStream) -> Result<EditorPng, glycin_ut
     let decoder = image::codecs::png::PngDecoder::new(cursor).expected_error()?;
 
     let editing_frame = image_rs::Handler::default()
-        .editing_frame(&decoder)
+        .editing_frame(decoder)
         .expected_error()?;
-    let mut frame_buf = vec![0; decoder.total_bytes() as usize];
-    decoder.read_image(&mut frame_buf).expected_error()?;
 
     let png: gufo::png::Png = gufo::png::Png::new(old_png_data).expected_error()?;
     let metadata = gufo::Metadata::for_png(&png);
@@ -33,24 +30,23 @@ pub fn load(mut stream: glycin_utils::UnixStream) -> Result<EditorPng, glycin_ut
     Ok(EditorPng {
         png,
         metadata,
-        frame_buf,
         editing_frame,
     })
 }
 
-pub fn apply(
+pub fn apply<B: ByteData>(
     img_editor: &EditorPng,
     mut operations: Operations,
-) -> Result<CompleteEditorOutput, glycin_utils::ProcessError> {
+) -> Result<CompleteEditorOutput<B>, glycin_utils::ProcessError> {
     if let Some(orientation) = img_editor.metadata.orientation() {
         operations.prepend(Operations::new_orientation(orientation));
     }
 
     let mut editing_frame = img_editor.editing_frame.clone();
-    let mut buf = img_editor.frame_buf.clone();
     let mut old_png = img_editor.png.clone();
 
-    buf = editing::apply_operations(buf, &mut editing_frame, &operations).expected_error()?;
+    let editing_frame =
+        editing::apply_operations(editing_frame.into_funglible(), &operations).expected_error()?;
 
     let mut new_png_data = Cursor::new(Vec::new());
     let encoder = image::codecs::png::PngEncoder::new_with_quality(
@@ -65,9 +61,10 @@ pub fn apply(
         image_rs::extended_memory_format_to_color_type(&editing_frame.memory_format)
             .internal_error()?,
     );
+    let texture = editing_frame.texture;
 
     encoder
-        .write_image(&buf, width, height, color_type)
+        .write_image(&texture, width, height, color_type)
         .internal_error()?;
 
     let new_png = gufo::png::Png::new(new_png_data.into_inner()).expected_error()?;
@@ -78,7 +75,7 @@ pub fn apply(
 
     let raw_data = reset_exif_orientation(old_png);
 
-    let data = BinaryData::from_data(&raw_data).expected_error()?;
+    let data = B::try_from_vec(raw_data).expected_error()?;
 
     Ok(CompleteEditorOutput::new(data))
 }
@@ -158,10 +155,10 @@ fn exif_orientation_value_position(data: Vec<u8>) -> Option<usize> {
         .map(|entry| entry.value_offset_position() as usize)
 }
 
-pub fn add_metadata(
+pub fn add_metadata<B: ByteData, C: ByteData>(
     buf: Vec<u8>,
-    image_info: &ImageDetails,
-    frame_details: &FrameDetails,
+    image_info: &ImageDetails<B>,
+    frame_details: &FrameDetails<C>,
 ) -> Vec<u8> {
     match add_metadata_internal(buf, image_info, frame_details) {
         Err(err) => {
@@ -172,10 +169,10 @@ pub fn add_metadata(
     }
 }
 
-fn add_metadata_internal(
+fn add_metadata_internal<B: ByteData, C: ByteData>(
     buf: Vec<u8>,
-    image_info: &ImageDetails,
-    _frame_details: &FrameDetails,
+    image_info: &ImageDetails<B>,
+    _frame_details: &FrameDetails<C>,
 ) -> Result<Vec<u8>, ErrorWithData<gufo::png::Error>> {
     let mut png = gufo::png::Png::new(buf)?;
 

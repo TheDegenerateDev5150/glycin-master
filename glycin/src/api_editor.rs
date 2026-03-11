@@ -3,9 +3,10 @@ use std::sync::{Arc, Mutex};
 
 use gio::glib;
 use gio::prelude::{IsA, *};
-use glycin_common::BinaryData;
 use glycin_utils::safe_math::SafeConversion;
-use glycin_utils::{ByteChanges, CompleteEditorOutput, Operations, SparseEditorOutput};
+use glycin_utils::{
+    ByteChanges, CompleteEditorOutput, Operations, SharedMemory, SparseEditorOutput,
+};
 use zbus::zvariant::OwnedObjectPath;
 
 use crate::api_common::*;
@@ -166,17 +167,17 @@ pub enum SparseEdit {
     /// apply these changes.
     Sparse(ByteChanges),
     /// The operations require to completely rewrite the image.
-    Complete(BinaryData),
+    Complete(SharedMemory),
 }
 
 #[derive(Debug)]
 pub struct Edit {
-    inner: CompleteEditorOutput,
+    inner: CompleteEditorOutput<SharedMemory>,
 }
 
 impl Edit {
-    pub fn data(&self) -> BinaryData {
-        self.inner.data.clone()
+    pub fn data(&self) -> SharedMemory {
+        todo!()
     }
 
     pub fn is_lossless(&self) -> bool {
@@ -226,10 +227,10 @@ impl SparseEdit {
     }
 }
 
-impl TryFrom<SparseEditorOutput> for SparseEdit {
+impl TryFrom<SparseEditorOutput<SharedMemory>> for SparseEdit {
     type Error = Error;
 
-    fn try_from(value: SparseEditorOutput) -> std::result::Result<Self, Self::Error> {
+    fn try_from(value: SparseEditorOutput<SharedMemory>) -> std::result::Result<Self, Self::Error> {
         if value.byte_changes.is_some() && value.data.is_some() {
             Err(Error::RemoteError(
                 glycin_utils::RemoteError::InternalLoaderError(

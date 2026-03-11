@@ -5,7 +5,7 @@ use std::sync::Arc;
 use futures_channel::oneshot;
 use gio::glib;
 use gio::prelude::CancellableExt;
-use glycin_utils::{DimensionTooLargerError, RemoteError};
+use glycin_utils::{DimensionTooLargerError, MemoryAllocationError, RemoteError};
 use libseccomp::error::SeccompError;
 
 use crate::config;
@@ -200,6 +200,8 @@ pub enum Error {
     CommonError(#[from] glycin_common::Error),
     #[error("Tried to use builtin processor in binary context")]
     ExpectedBinaryProcessor,
+    #[error("Failed to allocate memory: {0}")]
+    MemoryAllocationError(String),
 }
 
 impl Error {
@@ -263,5 +265,11 @@ impl From<oneshot::Canceled> for Error {
 impl From<DimensionTooLargerError> for Error {
     fn from(_err: DimensionTooLargerError) -> Self {
         Self::ConversionTooLargerError
+    }
+}
+
+impl From<MemoryAllocationError> for Error {
+    fn from(value: MemoryAllocationError) -> Self {
+        Self::MemoryAllocationError(value.to_string())
     }
 }

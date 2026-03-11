@@ -36,19 +36,15 @@ async fn run() -> Result<(), glycin::ErrorCtx> {
         "exif = {}",
         info.metadata_exif()
             .as_ref()
-            .map_or(String::from("empty"), |x| glib::format_size(
-                x.get_full().unwrap().len() as u64
-            )
-            .to_string())
+            .map_or(String::from("empty"), |x| glib::format_size(x.len() as u64)
+                .to_string())
     );
     println!(
         "xmp = {}",
         info.metadata_xmp()
             .as_ref()
-            .map_or(String::from("empty"), |x| glib::format_size(
-                x.get_full().unwrap().len() as u64
-            )
-            .to_string())
+            .map_or(String::from("empty"), |x| glib::format_size(x.len() as u64)
+                .to_string())
     );
     if let Some(key_value) = &info.metadata_key_value() {
         println!("key_value = ");
@@ -99,10 +95,8 @@ async fn run() -> Result<(), glycin::ErrorCtx> {
                 .details()
                 .color_icc_profile()
                 .as_ref()
-                .map_or(String::from("empty"), |x| glib::format_size(
-                    x.get_full().unwrap().len() as u64
-                )
-                .to_string())
+                .map_or(String::from("empty"), |x| glib::format_size(x.len() as u64)
+                    .to_string())
         );
         println!(
             "cicp = {}",

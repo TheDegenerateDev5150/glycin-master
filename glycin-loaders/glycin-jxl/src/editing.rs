@@ -1,6 +1,7 @@
 use glycin_common::ChannelType;
 use glycin_utils::{
-    BinaryData, EditorImplementation, GenericContexts, MemoryFormatInfo, MemoryFormatSelection,
+    ByteData, EditorImplementation, GenericContexts, MemoryFormatInfo, MemoryFormatSelection,
+    SharedMemory,
 };
 use jpegxl_rs::encode::{EncoderFrame, Metadata};
 
@@ -20,21 +21,21 @@ impl EditorImplementation for ImgEditor {
         .expected_error()
     }
 
-    fn apply_complete(
+    fn apply_complete<B: ByteData>(
         &self,
         _operations: glycin_utils::Operations,
-    ) -> Result<glycin_utils::CompleteEditorOutput, glycin_utils::ProcessError> {
+    ) -> Result<glycin_utils::CompleteEditorOutput<B>, glycin_utils::ProcessError> {
         Err(glycin_utils::RemoteError::UnsupportedImageFormat(
             self.mime_type.clone(),
         ))
         .expected_error()
     }
 
-    fn create(
+    fn create<B: ByteData>(
         _mime_type: String,
-        mut new_image: glycin_utils::NewImage,
+        mut new_image: glycin_utils::NewImage<B>,
         encoding_options: glycin_utils::EncodingOptions,
-    ) -> Result<glycin_utils::EncodedImage, glycin_utils::ProcessError> {
+    ) -> Result<glycin_utils::EncodedImage<B>, glycin_utils::ProcessError> {
         let frame = new_image.frames.remove(0);
 
         let mut encoder = jpegxl_rs::encoder_builder().build().internal_error()?;
@@ -46,13 +47,13 @@ impl EditorImplementation for ImgEditor {
 
         if let Some(exif) = new_image.image_info.metadata_exif {
             encoder
-                .add_metadata(&Metadata::Exif(&exif.get().internal_error()?), true)
+                .add_metadata(&Metadata::Exif(&exif), true)
                 .expected_error()?;
         }
 
         if let Some(xmp) = new_image.image_info.metadata_xmp {
             encoder
-                .add_metadata(&Metadata::Xmp(&xmp.get().internal_error()?), true)
+                .add_metadata(&Metadata::Xmp(&xmp), true)
                 .expected_error()?;
         }
 
@@ -67,17 +68,15 @@ impl EditorImplementation for ImgEditor {
             .best_format_for(frame.memory_format)
             .internal_error()?;
 
-        let v = frame.texture.get_full().expected_error()?;
-        let img_buf = glycin_utils::ImgBuf::Vec(v);
-        let (frame, img_buf) =
-            glycin_utils::editing::change_memory_format(img_buf, frame, memory_format)
+        let frame =
+            glycin_utils::editing::change_memory_format(frame.into_fungible(), memory_format)
                 .expected_error()?;
 
         let num_channels = memory_format.n_channels() as u32;
 
         let encoder_result = match memory_format.channel_type() {
             ChannelType::U8 => encoder.encode_frame::<u8, u8>(
-                &EncoderFrame::new(&img_buf).num_channels(num_channels),
+                &EncoderFrame::new(&frame.texture).num_channels(num_channels),
                 frame.width,
                 frame.height,
             ),
@@ -85,7 +84,7 @@ impl EditorImplementation for ImgEditor {
         }
         .expected_error()?;
 
-        let data = BinaryData::from_data(encoder_result.data).expected_error()?;
+        let data = B::try_from_vec(encoder_result.data).expected_error()?;
 
         Ok(glycin_utils::EncodedImage::new(data))
     }
