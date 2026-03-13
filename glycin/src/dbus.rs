@@ -22,10 +22,9 @@ use glycin_utils::{
 use nix::sys::signal;
 use zbus::zvariant::{self, OwnedObjectPath};
 
-use crate::remote_utils::seal_fd;
 use crate::sandbox::Sandbox;
 use crate::util::{self, Task, block_on, spawn, spawn_blocking_detached};
-use crate::{EditableImage, Error, Image, MimeType, SandboxMechanism, Source, api_loader, config};
+use crate::{EditableImage, Error, Image, MimeType, SandboxMechanism, Source, config};
 
 /// Max texture size 8 GB in bytes
 pub(crate) const MAX_TEXTURE_SIZE: u64 = 8 * 10u64.pow(9);

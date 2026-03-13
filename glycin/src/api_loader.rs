@@ -1,4 +1,3 @@
-use std::os::fd::AsRawFd;
 use std::sync::{Arc, Mutex};
 
 use gio::glib;
@@ -11,7 +10,6 @@ use glycin_utils::{
     SharedMemory,
 };
 use gufo_common::cicp::Cicp;
-use gufo_common::math::ToI64;
 use gufo_common::orientation::{Orientation, Rotation};
 use zbus::zvariant::OwnedObjectPath;
 
@@ -20,7 +18,6 @@ pub use crate::config::MimeType;
 use crate::dbus::*;
 use crate::error::ResultExt;
 use crate::pool::{Pool, PooledProcess, UsageTracker};
-use crate::remote_utils::{gbytes_from_mmap, seal_fd};
 use crate::util::{spawn_blocking, spawn_detached};
 use crate::{Error, ErrorCtx, config, icc, orientation, util};
 
@@ -150,7 +147,7 @@ impl Loader {
         match loader {
             Processor::Binary(binary_loader) => {
                 let process = binary_loader.use_process();
-                let mut remote_image = process
+                let remote_image = process
                     .init(
                         binary_loader.g_file_worker.unwrap(),
                         &binary_loader.mime_type,

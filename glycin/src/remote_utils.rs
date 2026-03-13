@@ -35,24 +35,3 @@ pub async fn seal_fd(fd: impl AsRawFd) -> Result<(), memfd::Error> {
 
     Ok(())
 }
-
-pub unsafe fn gbytes_from_mmap(raw_fd: RawFd) -> Result<glib::Bytes, Error> {
-    unsafe {
-        let mut error = std::ptr::null_mut();
-
-        let mapped_file =
-            glib::ffi::g_mapped_file_new_from_fd(raw_fd, glib::ffi::GFALSE, &mut error);
-
-        if !error.is_null() {
-            let err: glib::Error = glib::translate::from_glib_full(error);
-            return Err(err.into());
-        };
-
-        let bytes =
-            glib::translate::from_glib_full(glib::ffi::g_mapped_file_get_bytes(mapped_file));
-
-        glib::ffi::g_mapped_file_unref(mapped_file);
-
-        Ok(bytes)
-    }
-}

@@ -1,4 +1,4 @@
-use glycin_utils::{Frame, FungibleMemory, RemoteFrame};
+use glycin_utils::{Frame, FungibleMemory};
 
 use crate::Image;
 
