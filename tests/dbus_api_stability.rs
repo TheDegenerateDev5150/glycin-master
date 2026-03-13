@@ -80,18 +80,18 @@ async fn start_dbus() {
 struct MockLoader {}
 
 impl glycin_utils::LoaderImplementation for MockLoader {
-    fn frame(
+    fn frame<B: glycin_utils::ByteData>(
         &mut self,
         _frame_request: glycin_utils::FrameRequest,
-    ) -> Result<glycin_utils::RemoteFrame, glycin_utils::ProcessError> {
+    ) -> Result<glycin_utils::Frame<B>, glycin_utils::ProcessError> {
         unimplemented!()
     }
 
-    fn init(
+    fn init<B: glycin_utils::ByteData>(
         _stream: UnixStream,
         _mime_type: String,
         _details: glycin_utils::InitializationDetails,
-    ) -> Result<(Self, glycin_utils::ImageDetails), glycin_utils::ProcessError> {
+    ) -> Result<(Self, glycin_utils::ImageDetails<B>), glycin_utils::ProcessError> {
         unimplemented!()
     }
 }
@@ -114,18 +114,18 @@ impl glycin_utils::EditorImplementation for MockEditor {
         unimplemented!()
     }
 
-    fn create(
+    fn create<B: glycin_utils::ByteData>(
         _mime_type: String,
-        _new_image: glycin_utils::NewImage,
+        _new_image: glycin_utils::NewImage<B>,
         _encoding_options: glycin_utils::EncodingOptions,
-    ) -> Result<glycin_utils::EncodedImage, glycin_utils::ProcessError> {
+    ) -> Result<glycin_utils::EncodedImage<B>, glycin_utils::ProcessError> {
         unimplemented!()
     }
 
-    fn apply_complete(
+    fn apply_complete<B: glycin_utils::ByteData>(
         &self,
         _operations: glycin::Operations,
-    ) -> Result<glycin_utils::CompleteEditorOutput, glycin_utils::ProcessError> {
+    ) -> Result<glycin_utils::CompleteEditorOutput<B>, glycin_utils::ProcessError> {
         unimplemented!()
     }
 }

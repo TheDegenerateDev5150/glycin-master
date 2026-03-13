@@ -124,17 +124,14 @@ pub async fn compare_images(
     let reference_exif = get_info(&reference_path)
         .await
         .metadata_exif()
-        .map(|x| x.get().unwrap());
+        .map(|x| x.to_vec());
 
     let exif_eq = if !test_exif
         || (reference_exif.is_none() && path.as_ref().extension().unwrap() == "tiff")
     {
         true
     } else {
-        let exif = get_info(&path)
-            .await
-            .metadata_exif()
-            .map(|x| x.get().unwrap());
+        let exif = get_info(&path).await.metadata_exif().map(|x| x.to_vec());
         reference_exif.as_ref().map(|x| &x[..2]) == exif.as_ref().map(|x| &x[..2])
     };
 

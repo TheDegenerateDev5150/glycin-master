@@ -21,7 +21,7 @@ pub struct Creator {
     encoding_options: glycin_utils::EncodingOptions,
     new_image: glycin_utils::NewImage<SharedMemory>,
 
-    new_frames: Vec<Arc<NewFrame>>,
+    new_frames: Vec<NewFrame>,
 }
 
 static_assertions::assert_impl_all!(Creator: Send, Sync);
@@ -60,7 +60,7 @@ impl Creator {
         height: u32,
         memory_format: MemoryFormat,
         texture: Vec<u8>,
-    ) -> Result<Arc<NewFrame>, Error> {
+    ) -> Result<&NewFrame, Error> {
         let stride = memory_format
             .n_bytes()
             .u32()
@@ -80,7 +80,7 @@ impl Creator {
         stride: u32,
         memory_format: MemoryFormat,
         mut texture: Vec<u8>,
-    ) -> Result<Arc<NewFrame>, Error> {
+    ) -> Result<&NewFrame, Error> {
         let pixel_size = memory_format.n_bytes().u32();
 
         let smallest_stride = pixel_size
@@ -102,6 +102,7 @@ impl Creator {
         }
 
         if smallest_stride != stride {
+            dbg!("STRIDE CHANGE");
             let old_stride = stride as usize;
             let new_stride = smallest_stride as usize;
 
@@ -121,17 +122,14 @@ impl Creator {
             texture.resize(new_stride * height_, 0);
         };
 
-        let new_frame = Arc::new(NewFrame::new(
-            self.config.clone(),
-            width,
-            height,
-            memory_format,
-            texture,
-        ));
+        dbg!(&texture);
+        dbg!(texture.len());
 
-        self.new_frames.push(new_frame.clone());
+        let new_frame = NewFrame::new(self.config.clone(), width, height, memory_format, texture);
 
-        Ok(new_frame)
+        self.new_frames.push(new_frame);
+
+        Ok(self.new_frames.last().unwrap())
     }
 
     /// Encode an image
@@ -149,13 +147,11 @@ impl Creator {
 
         let mut new_image = self.new_image;
 
-        /*
         for frame in self.new_frames {
             new_image
                 .frames
-                .push((frame).frame().err_no_context(&self.cancellable)?);
+                .push(frame.frame().err_no_context(&self.cancellable)?);
         }
-         */
 
         Ok(EncodedImage::new(
             process
@@ -306,11 +302,11 @@ impl EncodedImage {
         Self { inner }
     }
 
-    pub fn data_ref(&self) -> Result<&[u8], std::io::Error> {
-        todo!()
+    pub fn data_ref(&self) -> &[u8] {
+        &self.inner.data
     }
 
-    pub fn data_full(&self) -> Result<Vec<u8>, std::io::Error> {
-        todo!()
+    pub fn data_full(&self) -> Vec<u8> {
+        self.inner.data.to_vec()
     }
 }

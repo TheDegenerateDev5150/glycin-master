@@ -51,6 +51,9 @@ impl EditorImplementation for ImgEditor {
         mut new_image: NewImage<B>,
         encoding_options: EncodingOptions,
     ) -> Result<EncodedImage<B>, ProcessError> {
+        if new_image.frames.is_empty() {
+            return Err(ProcessError::expected(&"No frames passed."));
+        }
         let frame = new_image.frames.remove(0);
 
         let image_format = image_format(&mime_type)?;

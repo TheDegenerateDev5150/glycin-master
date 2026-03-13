@@ -1,5 +1,9 @@
+use std::ffi::c_void;
+
 use glycin_common::{MemoryFormat, MemoryFormatInfo};
 use glycin_utils::FungibleMemory;
+use lcms2::Transform;
+use lcms2_sys::_HTRANSFORM;
 
 use crate::{ColorState, Error};
 
@@ -10,7 +14,13 @@ pub fn apply_transformation(
     glycin_utils::Frame<FungibleMemory>,
     Result<ColorState, Error>,
 ) {
-    match transform(icc_profile, frame.memory_format, &mut frame.texture) {
+    match transform(
+        icc_profile,
+        frame.memory_format,
+        &mut frame.texture,
+        frame.width,
+        frame.stride,
+    ) {
         Err(err) => (frame, Err(err.into())),
         Ok(color_state) => (frame, Ok(color_state)),
     }
@@ -47,18 +57,22 @@ fn transform(
     icc_profile: &[u8],
     memory_format: MemoryFormat,
     buf: &mut [u8],
+    width: u32,
+    stride: u32,
 ) -> std::result::Result<ColorState, lcms2::Error> {
     let multiple = std::thread::available_parallelism().map_or(2, |x| x.get());
     tracing::trace!("Applying ICC profiles while using {multiple} threads");
 
-    let chunk_size = (buf.len() / memory_format.n_bytes().usize()).div_ceil(multiple)
-        * memory_format.n_bytes().usize();
+    let chunk_size = (buf.len() / stride as usize).div_ceil(multiple) * stride as usize;
+    let row_length = width as usize * memory_format.n_bytes().usize();
 
     std::thread::scope(|s| {
         for chunk in buf.chunks_mut(chunk_size) {
             s.spawn(move || {
                 let transform = transformation(icc_profile, memory_format)?;
-                transform.transform_in_place(chunk);
+                for row in chunk.chunks_mut(stride as usize) {
+                    transform.transform_in_place(&mut row[0..row_length]);
+                }
                 Ok::<(), lcms2::Error>(())
             });
         }

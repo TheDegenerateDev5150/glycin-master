@@ -54,7 +54,7 @@ fn roundtrip_all() {
                 mime_type.as_str().replace("/", "-"),
                 mime_type.extension().unwrap()
             );
-            std::fs::write(&path, encoded_image.data_ref().unwrap()).unwrap();
+            std::fs::write(&path, encoded_image.data_ref()).unwrap();
 
             let result = compare_images_path(reference_path, path, false).await;
             if result.is_failed() {
@@ -83,18 +83,12 @@ fn write_jpeg() {
 
         let encoded_image = encoder.create().await.unwrap();
 
-        let loader = glycin::Loader::new_vec(encoded_image.data_full().unwrap());
+        let loader = glycin::Loader::new_vec(encoded_image.data_full());
         let image = loader.load().await.unwrap();
         let frame = image.next_frame().await.unwrap();
 
         assert_eq!(
-            frame
-                .details()
-                .color_icc_profile()
-                .as_ref()
-                .unwrap()
-                .get_full()
-                .unwrap(),
+            frame.details().color_icc_profile().unwrap().to_vec(),
             vec![1, 2, 3]
         );
     });
@@ -121,7 +115,7 @@ fn write_jpeg_stride() {
 
         let encoded_image = encoder.create().await.unwrap();
 
-        let loader = glycin::Loader::new_vec(encoded_image.data_full().unwrap());
+        let loader = glycin::Loader::new_vec(encoded_image.data_full());
         let image = loader.load().await.unwrap();
         let frame = image.next_frame().await.unwrap();
 
@@ -152,7 +146,7 @@ fn write_jpeg_stride_last_row() {
 
         let encoded_image = encoder.create().await.unwrap();
 
-        let loader = glycin::Loader::new_vec(encoded_image.data_full().unwrap());
+        let loader = glycin::Loader::new_vec(encoded_image.data_full());
         let image = loader.load().await.unwrap();
         let frame = image.next_frame().await.unwrap();
 
@@ -197,7 +191,7 @@ fn create_jpeg_quality() {
             .unwrap();
         let encoded_image = creator.create().await.unwrap();
 
-        let loader = glycin::Loader::new_vec(encoded_image.data_full().unwrap());
+        let loader = glycin::Loader::new_vec(encoded_image.data_full());
         let image = loader.load().await.unwrap();
         let frame = image.next_frame().await.unwrap();
 
@@ -210,7 +204,7 @@ fn create_jpeg_quality() {
             .unwrap();
         let encoded_image = creator.create().await.unwrap();
 
-        let loader = glycin::Loader::new_vec(encoded_image.data_full().unwrap());
+        let loader = glycin::Loader::new_vec(encoded_image.data_full());
         let image = loader.load().await.unwrap();
         let frame = image.next_frame().await.unwrap();
 
@@ -238,7 +232,7 @@ fn create_png_compression() {
             .unwrap();
         let encoded_image = creator.create().await.unwrap();
 
-        let size_100 = encoded_image.data_ref().unwrap().len();
+        let size_100 = encoded_image.data_ref().len();
 
         let mut creator = Creator::new(MimeType::PNG).await.unwrap();
         creator.set_encoding_compression(50).unwrap();
@@ -247,7 +241,7 @@ fn create_png_compression() {
             .unwrap();
         let encoded_image = creator.create().await.unwrap();
 
-        let size_50 = encoded_image.data_ref().unwrap().len();
+        let size_50 = encoded_image.data_ref().len();
 
         let mut creator = Creator::new(MimeType::PNG).await.unwrap();
         creator.set_encoding_compression(0).unwrap();
@@ -256,7 +250,7 @@ fn create_png_compression() {
             .unwrap();
         let encoded_image = creator.create().await.unwrap();
 
-        let size_0 = encoded_image.data_ref().unwrap().len();
+        let size_0 = encoded_image.data_ref().len();
 
         assert!(size_100 < size_50, "{size_100} < {size_50}");
         assert!(size_50 < size_0, "{size_50} < {size_0}");
@@ -290,7 +284,7 @@ fn write_png() {
 
         let encoded_image = encoder.create().await.unwrap();
 
-        let mut loader = glycin::Loader::new_vec(encoded_image.data_full().unwrap());
+        let mut loader = glycin::Loader::new_vec(encoded_image.data_full());
         loader.accepted_memory_formats(glycin::MemoryFormatSelection::R8g8b8);
         let image = loader.load().await.unwrap();
 
@@ -308,13 +302,7 @@ fn write_png() {
 
         assert_eq!(frame.buf_slice(), [255, 0, 0]);
         assert_eq!(
-            frame
-                .details()
-                .color_icc_profile()
-                .as_ref()
-                .unwrap()
-                .get_full()
-                .unwrap(),
+            frame.details().color_icc_profile().unwrap().to_vec(),
             vec![1, 2, 3]
         );
     });
@@ -338,7 +326,7 @@ fn write_avif() {
             .unwrap();
         let encoded_image = encoder.create().await.unwrap();
 
-        let loader = glycin::Loader::new_vec(encoded_image.data_full().unwrap());
+        let loader = glycin::Loader::new_vec(encoded_image.data_full());
         let image = loader.load().await.unwrap();
         let frame = image.next_frame().await.unwrap();
 

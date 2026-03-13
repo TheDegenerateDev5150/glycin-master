@@ -735,7 +735,9 @@ fn remove_stride_if_needed(
     frame.stride = width.try_u32()?;
 
     //Ok(img_buf.resize(frame.n_bytes()?.i64()?)?)
-    todo!()
+    //todo!()
+    // TODO Resize vs realloc stuff
+    Ok(frame)
 }
 impl FrameRequest {
     pub fn new() -> Self {

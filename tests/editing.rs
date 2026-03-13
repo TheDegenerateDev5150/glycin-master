@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 mod utils;
 
 use gio::prelude::FileExt;
-use glycin::{RemoteBinaryData, SparseEdit};
+use glycin::SparseEdit;
 use utils::*;
 
 #[test]
@@ -61,7 +61,7 @@ async fn test(test_name: &str) {
                 "{}-{apply_type}-test-out.png",
                 path.file_name().unwrap().to_string_lossy()
             );
-            let out_path = write_tmp(&format!("{out_name}"), &data.get().unwrap());
+            let out_path = write_tmp(&format!("{out_name}"), &data);
             let result = compare_images_path(&reference_path, out_path, true).await;
 
             results.push(result);
@@ -78,7 +78,7 @@ fn write_tmp(path: impl AsRef<Path>, data: &[u8]) -> PathBuf {
     tmp_path
 }
 
-async fn apply_operations_sparse(image: &Path, operations: &Path) -> glycin::RemoteBinaryData {
+async fn apply_operations_sparse(image: &Path, operations: &Path) -> Vec<u8> {
     let reader = std::fs::File::open(operations).unwrap();
     let operations: glycin::Operations = serde_yaml::from_reader(reader).unwrap();
 
@@ -88,7 +88,7 @@ async fn apply_operations_sparse(image: &Path, operations: &Path) -> glycin::Rem
     let sparse_edit = editor.apply_sparse(&operations).await.unwrap();
 
     if let SparseEdit::Complete(data) = sparse_edit {
-        data
+        data.to_vec()
     } else {
         let (tmp_file, _) = gio::File::new_tmp(None::<PathBuf>).unwrap();
         let tmp_path = tmp_file.path().unwrap();
@@ -101,17 +101,21 @@ async fn apply_operations_sparse(image: &Path, operations: &Path) -> glycin::Rem
             glycin::EditOutcome::Changed
         );
 
-        let data = std::fs::read(tmp_file.path().unwrap()).unwrap();
-        RemoteBinaryData::from_data(data).unwrap()
+        std::fs::read(tmp_file.path().unwrap()).unwrap()
     }
 }
 
-async fn apply_operations_complete(image: &Path, operations: &Path) -> glycin::RemoteBinaryData {
+async fn apply_operations_complete(image: &Path, operations: &Path) -> Vec<u8> {
     let reader = std::fs::File::open(operations).unwrap();
     let operations: glycin::Operations = serde_yaml::from_reader(reader).unwrap();
 
     let file = gio::File::for_path(image);
     let editor = glycin::Editor::new(file).edit().await.unwrap();
 
-    editor.apply_complete(&operations).await.unwrap().data()
+    editor
+        .apply_complete(&operations)
+        .await
+        .unwrap()
+        .data()
+        .to_vec()
 }

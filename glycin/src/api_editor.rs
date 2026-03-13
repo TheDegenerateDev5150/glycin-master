@@ -176,8 +176,8 @@ pub struct Edit {
 }
 
 impl Edit {
-    pub fn data(&self) -> SharedMemory {
-        todo!()
+    pub fn data(&self) -> &[u8] {
+        &self.inner.data
     }
 
     pub fn is_lossless(&self) -> bool {
