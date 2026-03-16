@@ -75,19 +75,19 @@ The following formats are supported by the glycin loaders provided in the [loade
 
 ## Image Loader Configuration
 
-Loader configurations are read by the client library from `XDG_DATA_DIRS` and `XDG_DATA_HOME`. The location is typically of the from
+Loader configurations are read by the client library from `XDG_DATA_DIRS` and `XDG_DATA_HOME`. The location is typically of the form:
 
 ```
 <data-dir>/share/glycin-loaders/<compat-version>+/conf.d/<loader-name>.conf
 ```
 
-so for example
+for example:
 
 ```
 <data-dir>/share/glycin-loaders/2+/conf.d/glycin-image-rs.conf
 ```
 
-The configs are [glib KeyFiles](https://docs.gtk.org/glib/struct.KeyFile.html) of the the form
+The configs are [glib KeyFiles](https://docs.gtk.org/glib/struct.KeyFile.html) of the form:
 
 ```ini
 [loader:image/png]
@@ -98,7 +98,7 @@ Where the part behind `loader` is a mime-type and the value of `Exec` can be any
 
 ### Existing Compatibility Versions
 
-Not every new major version of the library has to break compatibility with the loaders. If a glycin version X breaks compatibility, the new compatibility version will be called X+. Only glycin X and newer version will be compatible with X+ until a new compatibility version is used. The definition of the API of each compatibility version is available in [`docs/`](docs/). The following compatibility versions currently exist
+Not every new major version of the library has to break compatibility with the loaders. If a glycin version X breaks compatibility, the new compatibility version will be called X+. Only glycin X and newer versions will be compatible with X+ until a new compatibility version is used. The definition of the API of each compatibility version is available in [`docs/`](docs/). The following compatibility versions currently exist
 
 | compat-version | Compatible With                |
 |----------------|--------------------------------|
