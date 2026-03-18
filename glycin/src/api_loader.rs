@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use futures_util::FutureExt;
 use gio::glib;
 use gio::prelude::*;
 pub use glycin_common::MemoryFormat;
@@ -11,6 +12,7 @@ use glycin_utils::{
 };
 use gufo_common::cicp::Cicp;
 use gufo_common::orientation::{Orientation, Rotation};
+use util::{CancellableFuture, ShortcutErrorFuture};
 use zbus::zvariant::OwnedObjectPath;
 
 use crate::api_common::*;
@@ -129,7 +131,15 @@ impl Loader {
     /// Load basic image information and enable further operations
     pub async fn load(mut self) -> Result<Image, ErrorCtx> {
         let source = self.source.send();
+        let main_context = self.main_context();
+        let cancellable = self.cancellable.clone();
 
+        let f = || async move { self.load_internal(source).await }.make_cancellable(cancellable);
+
+        main_context.spawn_from_within(f).await.unwrap()
+    }
+
+    async fn load_internal(self, source: Source) -> Result<Image, ErrorCtx> {
         let loader_context = ProcessorContext::new(
             source,
             self.use_expose_base_dir,
@@ -137,81 +147,113 @@ impl Loader {
             &self.sandbox_selector,
         )
         .await
-        .err_no_context(&self.cancellable)?;
+        .err_no_context_legacy(&self.cancellable)?;
 
         let loader = loader_context
             .loader(self.pool.clone(), &self.cancellable)
             .await
-            .err_no_context(&self.cancellable)?;
+            .err_no_context()?;
 
         match loader {
-            Processor::Binary(binary_loader) => {
-                let process = binary_loader.use_process();
-                let remote_image = process
-                    .init(
-                        binary_loader.g_file_worker.unwrap(),
-                        &binary_loader.mime_type,
-                    )
-                    .await
-                    .err_context(&process, &self.cancellable)?;
-
-                let mut details = remote_image.details.into_fungible();
-
-                if self.apply_transformations {
-                    match Image::transformation_orientation_internal(&details).rotate() {
-                        Rotation::_90 | Rotation::_270 => {
-                            std::mem::swap(&mut details.width, &mut details.height);
-                        }
-                        _ => {}
-                    }
-                }
-
-                let path = remote_image.frame_request.clone();
-                self.cancellable.connect_cancelled(glib::clone!(
-                    #[strong(rename_to=process)]
-                    binary_loader.process,
-                    move |_| {
-                        tracing::debug!("Terminating loader");
-                        crate::util::spawn_detached(process.use_().done(path))
-                    }
-                ));
-
-                Ok(Image {
-                    image_loader: ImageLoader::Binary(ImageBinaryLoader {
-                        process: binary_loader.process,
-                        active_sandbox_mechanism: binary_loader.sandbox_mechanism,
-                        usage_tracker: Mutex::new(Some(binary_loader.usage_tracker)),
-                        frame_request: remote_image.frame_request,
-                    }),
-                    details: Arc::new(details),
-                    loader: self,
-                    mime_type: binary_loader.mime_type,
-                })
-            }
+            Processor::Binary(binary_loader) => self.load_internal_external(binary_loader).await,
             #[cfg(feature = "builtin")]
-            Processor::Builtin(builtin) => match builtin.builtin {
-                #[cfg(feature = "builtin-image-rs")]
-                config::BuiltinProcessor::ImageRs(_) => {
-                    let (img_decoder, details) = glycin_image_rs::ImgDecoder::init(
-                        builtin
-                            .g_file_worker
-                            .unwrap()
-                            .unix_stream_reader()
-                            .err_no_context(&self.cancellable)?,
+            Processor::Builtin(builtin) => self.load_internal_builtin(builtin).await,
+        }
+    }
+
+    async fn load_internal_external(
+        self,
+        binary_loader: BinaryProcessor<LoaderProxy<'static>>,
+    ) -> Result<Image, ErrorCtx> {
+        tracing::debug!("Using external loader");
+
+        let process = binary_loader.use_process();
+        let (remote_reader, file_read_future) = binary_loader
+            .source_transmission
+            .unwrap()
+            .spawn_external()
+            .err_no_context()?;
+
+        let remote_image_future = process.init(&binary_loader.mime_type, remote_reader);
+
+        // Drive reading the image source in parallel and shortcut if it errors
+        let remote_image = remote_image_future
+            .join_abort_on_error(file_read_future)
+            .await
+            .err_context(&process, &self.cancellable)?;
+
+        let mut details = remote_image.details.into_fungible();
+
+        if self.apply_transformations {
+            match Image::transformation_orientation_internal(&details).rotate() {
+                Rotation::_90 | Rotation::_270 => {
+                    std::mem::swap(&mut details.width, &mut details.height);
+                }
+                _ => {}
+            }
+        }
+
+        let path = remote_image.frame_request.clone();
+        self.cancellable.connect_cancelled(glib::clone!(
+            #[strong(rename_to=process)]
+            binary_loader.process,
+            move |_| {
+                tracing::debug!("Terminating loader");
+                crate::util::spawn_detached(process.use_().done(path))
+            }
+        ));
+
+        let mime_type = binary_loader.mime_type.clone();
+
+        Ok(Image {
+            image_loader: ImageLoader::Binary(ImageBinaryLoader {
+                process: binary_loader.process,
+                active_sandbox_mechanism: binary_loader.sandbox_mechanism,
+                usage_tracker: Mutex::new(Some(binary_loader.usage_tracker)),
+                frame_request: remote_image.frame_request,
+            }),
+            details: Arc::new(details),
+            loader: self,
+            mime_type,
+        })
+    }
+
+    #[cfg(feature = "builtin")]
+    async fn load_internal_builtin(self, builtin: BuiltinProcessor) -> Result<Image, ErrorCtx> {
+        tracing::debug!("Using builtin loader '{}'", builtin.builtin.common().name());
+
+        match builtin.builtin {
+            #[cfg(feature = "builtin-image-rs")]
+            config::BuiltinProcessor::ImageRs(_) => {
+                let (source_reader, file_read_future) =
+                    builtin.source_transmission.unwrap().spawn_builtin();
+
+                let mime_type = builtin.mime_type.clone();
+
+                let remote_image_future = gio::spawn_blocking(move || {
+                    glycin_image_rs::ImgDecoder::init(
+                        source_reader,
                         builtin.mime_type.to_string(),
                         InitializationDetails::default(),
                     )
-                    .unwrap();
-                    Ok(Image {
-                        image_loader: ImageLoader::Builtin(ImageBuiltinLoader::ImageRs(
-                            Mutex::new(img_decoder),
-                        )),
-                        details: Arc::new(details),
-                        loader: self,
-                        mime_type: builtin.mime_type,
-                    })
-                }
-            },
+                    .map_err(|e| Error::from(e.into_loader_error()))
+                })
+                .map(|x| x.unwrap());
+
+                let (img_decoder, image_details) = remote_image_future
+                    .join_abort_on_error(file_read_future)
+                    .await
+                    .err_no_context()?;
+
+                Ok(Image {
+                    image_loader: ImageLoader::Builtin(ImageBuiltinLoader::ImageRs(Mutex::new(
+                        img_decoder,
+                    ))),
+                    details: Arc::new(image_details),
+                    loader: self,
+                    mime_type,
+                })
+            }
         }
     }
 
@@ -307,7 +349,7 @@ impl Image {
 
                 Frame::from_loader(frame, &self)
                     .await
-                    .err_no_context(&self.cancellable())
+                    .err_no_context_legacy(&self.cancellable())
             }
             #[cfg(feature = "builtin")]
             ImageLoader::Builtin(builtin) => match builtin {
@@ -316,10 +358,11 @@ impl Image {
                         .lock()
                         .unwrap()
                         .frame(glycin_utils::FrameRequest::default())
-                        .unwrap();
+                        .map_err(|e| e.into_loader_error().into())
+                        .err_no_context_legacy(&self.loader.cancellable)?;
                     Frame::from_loader(frame, self)
                         .await
-                        .err_no_context(&self.cancellable())
+                        .err_no_context_legacy(&self.cancellable())
                 }
             },
         }
@@ -341,7 +384,7 @@ impl Image {
 
                 Frame::from_loader(frame, &self)
                     .await
-                    .err_no_context(&self.cancellable())
+                    .err_no_context_legacy(&self.cancellable())
             }
             #[cfg(feature = "builtin")]
             ImageLoader::Builtin(builtin) => match builtin {
@@ -351,10 +394,11 @@ impl Image {
                         .lock()
                         .unwrap()
                         .frame(frame_request.request)
-                        .unwrap();
+                        .map_err(|e| e.into_loader_error().into())
+                        .err_no_context_legacy(&self.loader.cancellable)?;
                     Frame::from_loader(frame, self)
                         .await
-                        .err_no_context(&self.cancellable())
+                        .err_no_context_legacy(&self.cancellable())
                 }
             },
         }
@@ -367,6 +411,7 @@ impl Image {
 
     /// Returns already obtained info
     pub(crate) fn frame_request_path(&self) -> OwnedObjectPath {
+        #[allow(irrefutable_let_patterns)]
         if let ImageLoader::Binary(image_loader) = &self.image_loader {
             image_loader.frame_request.clone()
         } else {
@@ -624,9 +669,6 @@ impl Frame {
         } else if let Some(icc_profile) =
             frame.details.color_icc_profile.as_ref().map(|x| x.to_vec())
         {
-            // Align stride with pixel size if necessary
-            let frame = remove_stride_if_needed(frame)?;
-
             let (frame, icc_result) =
                 spawn_blocking(move || icc::apply_transformation(&icc_profile, frame)).await;
 

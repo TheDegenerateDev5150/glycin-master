@@ -1,3 +1,5 @@
+use std::io::Read;
+
 use glycin_utils::{ByteData, EditorImplementation, GenericContexts, MemoryFormatInfo};
 use libheif_rs::{
     Channel, ColorProfileRaw, ColorSpace, CompressionFormat, EncoderQuality, HeifContext, Image,
@@ -9,8 +11,8 @@ pub struct ImgEditor {
 }
 
 impl EditorImplementation for ImgEditor {
-    fn edit(
-        _stream: std::os::unix::net::UnixStream,
+    fn edit<S: Read>(
+        _stream: S,
         mime_type: String,
         _details: glycin_utils::InitializationDetails,
     ) -> Result<Self, glycin_utils::ProcessError> {

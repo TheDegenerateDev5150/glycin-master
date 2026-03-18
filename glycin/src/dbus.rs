@@ -2,7 +2,7 @@
 
 //! Internal DBus API
 
-use std::io::{Read, Write};
+use std::io::Read;
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use futures_channel::oneshot;
-use futures_util::{FutureExt, future};
+use futures_util::FutureExt;
 use gio::glib;
 use gio::prelude::*;
 use glycin_common::Operations;
@@ -20,6 +20,7 @@ use glycin_utils::{
     SharedMemory, SparseEditorOutput,
 };
 use nix::sys::signal;
+use util::AsyncWriteExt;
 use zbus::zvariant::{self, OwnedObjectPath};
 
 use crate::sandbox::Sandbox;
@@ -243,12 +244,10 @@ impl<P: ZbusProxy<'static>> RemoteProcess<P> {
 
     fn init_request(
         &self,
-        gfile_worker: &GFileWorker,
         mime_type: &MimeType,
+        external_reader: UnixStream,
     ) -> Result<InitRequest, Error> {
-        let remote_reader = gfile_worker.unix_stream_reader()?;
-
-        let fd = zvariant::OwnedFd::from(OwnedFd::from(remote_reader));
+        let fd = zvariant::OwnedFd::from(OwnedFd::from(external_reader));
 
         let mime_type = mime_type.to_string();
 
@@ -266,28 +265,14 @@ impl<P: ZbusProxy<'static>> RemoteProcess<P> {
 impl RemoteProcess<LoaderProxy<'static>> {
     pub async fn init(
         &self,
-        gfile_worker: GFileWorker,
         mime_type: &MimeType,
+        external_reader: UnixStream,
     ) -> Result<RemoteImage<SharedMemory>, Error> {
-        let init_request = self.init_request(&gfile_worker, mime_type)?;
+        let init_request = self.init_request(mime_type, external_reader)?;
 
-        let image_info = self.proxy.init(init_request).fuse();
+        let image_info = self.proxy.init(init_request).await?;
 
-        let reader_error = gfile_worker.error().fuse();
-        futures_util::pin_mut!(reader_error);
-        futures_util::pin_mut!(image_info);
-
-        let image_info = loop {
-            futures_util::select! {
-                info = image_info => {
-                    break info?;
-                }
-                read_result = reader_error => {
-                    read_result?;
-                }
-            }
-        };
-
+        /*
         // Seal all memfds
         if let Some(exif) = &image_info.details.metadata_exif {
             exif.seal().await.unwrap();
@@ -295,6 +280,7 @@ impl RemoteProcess<LoaderProxy<'static>> {
         if let Some(xmp) = &image_info.details.metadata_xmp {
             xmp.seal().await.unwrap();
         }
+         */
 
         Ok(image_info)
     }
@@ -341,10 +327,10 @@ impl RemoteProcess<EditorProxy<'static>> {
 
     pub async fn edit(
         &self,
-        gfile_worker: &GFileWorker,
+        unix_stream: UnixStream,
         mime_type: &MimeType,
     ) -> Result<RemoteEditableImage, Error> {
-        let init_request = self.init_request(gfile_worker, mime_type)?;
+        let init_request = self.init_request(mime_type, unix_stream)?;
 
         self.proxy.edit(init_request).await.map_err(Into::into)
     }
@@ -405,8 +391,6 @@ impl RemoteProcess<EditorProxy<'static>> {
     }
 }
 
-const BUF_SIZE: usize = u16::MAX as usize;
-
 #[zbus::proxy(interface = "org.gnome.glycin.Loader")]
 pub trait Loader {
     async fn init(
@@ -449,112 +433,6 @@ pub trait EditableImage {
     ) -> Result<CompleteEditorOutput<SharedMemory>, RemoteError>;
 
     async fn done(&self) -> Result<(), RemoteError>;
-}
-
-#[derive(Debug)]
-pub struct GFileWorker {
-    file: Option<gio::File>,
-    writer_send: Mutex<Option<oneshot::Sender<UnixStream>>>,
-    first_bytes_recv: future::Shared<oneshot::Receiver<Arc<Vec<u8>>>>,
-    error_recv: future::Shared<oneshot::Receiver<Result<(), Error>>>,
-}
-
-impl GFileWorker {
-    pub fn spawn(source: Source, cancellable: gio::Cancellable) -> GFileWorker {
-        let file = source.file();
-
-        let (error_send, error_recv) = oneshot::channel();
-        let (first_bytes_send, first_bytes_recv) = oneshot::channel();
-        let (writer_send, writer_recv) = oneshot::channel();
-
-        spawn_blocking_detached(move || {
-            Self::handle_errors(error_send, move || {
-                let reader = source.to_stream(&cancellable)?;
-                let mut buf = vec![0; BUF_SIZE];
-
-                let n = reader
-                    .read(&mut buf, Some(&cancellable))
-                    .map_err(Error::ImageSource)?;
-                let first_bytes = Arc::new(buf[..n].to_vec());
-                first_bytes_send
-                    .send(first_bytes.clone())
-                    .or(Err(Error::InternalCommunicationCanceled))?;
-
-                let mut writer: UnixStream = block_on(writer_recv)?;
-
-                writer.write_all(&first_bytes)?;
-                drop(first_bytes);
-
-                loop {
-                    let n = reader
-                        .read(&mut buf, Some(&cancellable))
-                        .map_err(Error::ImageSource)?;
-                    if n == 0 {
-                        break;
-                    }
-                    writer.write_all(&buf[..n])?;
-                }
-
-                Ok(())
-            })
-        });
-
-        GFileWorker {
-            file,
-            writer_send: Mutex::new(Some(writer_send)),
-            first_bytes_recv: first_bytes_recv.shared(),
-            error_recv: error_recv.shared(),
-        }
-    }
-
-    fn handle_errors(
-        error_send: oneshot::Sender<Result<(), Error>>,
-        f: impl FnOnce() -> Result<(), Error>,
-    ) {
-        let result = f();
-        let _result = error_send.send(result);
-    }
-
-    pub fn write_to(&self, stream: UnixStream) -> Result<(), Error> {
-        let sender = std::mem::take(&mut *self.writer_send.lock().unwrap());
-
-        sender
-            // TODO: this fails if write_to is called a second time
-            .unwrap()
-            .send(stream)
-            .or(Err(Error::InternalCommunicationCanceled))
-    }
-
-    pub fn file(&self) -> Option<&gio::File> {
-        self.file.as_ref()
-    }
-
-    pub async fn error(&self) -> Result<(), Error> {
-        match self.error_recv.clone().await {
-            Ok(result) => result,
-            Err(_) => Ok(()),
-        }
-    }
-
-    pub async fn head(&self) -> Result<Arc<Vec<u8>>, Error> {
-        futures_util::select!(
-            err = self.error_recv.clone() => err?,
-            _bytes = self.first_bytes_recv.clone() => Ok(()),
-        )?;
-
-        match self.first_bytes_recv.clone().await {
-            Err(_) => self.error_recv.clone().await?.map(|_| Default::default()),
-            Ok(bytes) => Ok(bytes),
-        }
-    }
-
-    pub fn unix_stream_reader(&self) -> Result<UnixStream, Error> {
-        let (remote_reader, writer) = std::os::unix::net::UnixStream::pair()?;
-
-        self.write_to(writer)?;
-
-        Ok(remote_reader)
-    }
 }
 
 #[cfg(not(feature = "tokio"))]

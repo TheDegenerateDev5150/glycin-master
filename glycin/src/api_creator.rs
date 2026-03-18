@@ -6,10 +6,13 @@ use glib::prelude::*;
 use glycin_common::MemoryFormatInfo;
 use glycin_utils::{ByteData, DimensionTooLargerError, MemoryFormat, SharedMemory};
 
+#[cfg(feature = "builtin")]
+#[cfg(feature = "builtin-image-rs")]
+use crate::config;
 use crate::config::{Config, ImageEditorConfig};
 use crate::error::ResultExt;
 use crate::pool::Pool;
-use crate::{Error, ErrorCtx, MimeType, SandboxSelector, spin_up_encoder};
+use crate::{Error, ErrorCtx, MimeType, Processor, ProcessorContext, SandboxSelector};
 
 #[derive(Debug)]
 pub struct Creator {
@@ -60,7 +63,7 @@ impl Creator {
         height: u32,
         memory_format: MemoryFormat,
         texture: Vec<u8>,
-    ) -> Result<&NewFrame, Error> {
+    ) -> Result<&mut NewFrame, Error> {
         let stride = memory_format
             .n_bytes()
             .u32()
@@ -80,7 +83,7 @@ impl Creator {
         stride: u32,
         memory_format: MemoryFormat,
         mut texture: Vec<u8>,
-    ) -> Result<&NewFrame, Error> {
+    ) -> Result<&mut NewFrame, Error> {
         let pixel_size = memory_format.n_bytes().u32();
 
         let smallest_stride = pixel_size
@@ -102,7 +105,6 @@ impl Creator {
         }
 
         if smallest_stride != stride {
-            dbg!("STRIDE CHANGE");
             let old_stride = stride as usize;
             let new_stride = smallest_stride as usize;
 
@@ -122,43 +124,63 @@ impl Creator {
             texture.resize(new_stride * height_, 0);
         };
 
-        dbg!(&texture);
-        dbg!(texture.len());
-
         let new_frame = NewFrame::new(self.config.clone(), width, height, memory_format, texture);
 
         self.new_frames.push(new_frame);
 
-        Ok(self.new_frames.last().unwrap())
+        // TODO: Replace with push_mut once we use Rust 1.95
+        Ok(self.new_frames.last_mut().unwrap())
     }
 
     /// Encode an image
     pub async fn create(self) -> Result<EncodedImage, ErrorCtx> {
-        let process_context = spin_up_encoder(
-            self.mime_type.clone(),
-            self.pool.clone(),
-            &self.cancellable,
-            &self.sandbox_selector,
-        )
-        .await
-        .err_no_context(&self.cancellable)?;
-
-        let process = process_context.use_process();
-
         let mut new_image = self.new_image;
 
         for frame in self.new_frames {
             new_image
                 .frames
-                .push(frame.frame().err_no_context(&self.cancellable)?);
+                .push(frame.frame().err_no_context_legacy(&self.cancellable)?);
         }
 
-        Ok(EncodedImage::new(
-            process
-                .create(&self.mime_type, new_image, self.encoding_options)
+        let editor_context =
+            ProcessorContext::new_sourceless(self.mime_type, &self.sandbox_selector)
                 .await
-                .err_context(&process, &self.cancellable)?,
-        ))
+                .err_no_context_legacy(&self.cancellable)?;
+
+        let editor = editor_context
+            .editor(self.pool.clone(), &self.cancellable)
+            .await
+            .err_no_context_legacy(&self.cancellable)?;
+
+        match editor {
+            Processor::Binary(editor) => {
+                let process = editor.process.use_();
+
+                Ok(EncodedImage::new(
+                    process
+                        .create(&editor.mime_type, new_image, self.encoding_options)
+                        .await
+                        .err_context(&process, &self.cancellable)?,
+                ))
+            }
+            #[cfg(feature = "builtin")]
+            Processor::Builtin(builtin) => match builtin.builtin {
+                #[cfg(feature = "builtin-image-rs")]
+                config::BuiltinProcessor::ImageRs(_) => {
+                    use glycin_utils::EditorImplementation;
+
+                    let encoded_image = glycin_image_rs::ImgEditor::create(
+                        builtin.mime_type.to_string(),
+                        new_image,
+                        self.encoding_options,
+                    )
+                    .map_err(|e| e.into_editor_error().into())
+                    .err_no_context_legacy(&self.cancellable)?;
+
+                    Ok(EncodedImage::new(encoded_image))
+                }
+            },
+        }
     }
 
     pub fn set_encoding_quality(&mut self, quality: u8) -> Result<(), FeatureNotSupported> {
@@ -240,7 +262,7 @@ pub struct NewFrame {
     texture: Vec<u8>,
     //delay: Option<Duration>,
     details: glycin_utils::FrameDetails<SharedMemory>,
-    icc_profile: Mutex<Option<Vec<u8>>>,
+    icc_profile: Option<Vec<u8>>,
 }
 
 impl NewFrame {
@@ -265,14 +287,14 @@ impl NewFrame {
     }
 
     pub fn set_color_icc_profile(
-        &self,
+        &mut self,
         icc_profile: Option<Vec<u8>>,
     ) -> Result<(), FeatureNotSupported> {
         if !self.config.creator_color_icc_profile {
             return Err(FeatureNotSupported);
         }
 
-        *self.icc_profile.lock().unwrap() = icc_profile;
+        self.icc_profile = icc_profile;
         Ok(())
     }
 
@@ -283,8 +305,8 @@ impl NewFrame {
 
         frame.details = self.details;
 
-        if let Some(icc_profile) = self.icc_profile.lock().unwrap().as_ref() {
-            let icc_profile = SharedMemory::try_from_slice(icc_profile)?;
+        if let Some(icc_profile) = self.icc_profile {
+            let icc_profile = SharedMemory::try_from_vec(icc_profile)?;
             frame.details.color_icc_profile = Some(icc_profile);
         }
 

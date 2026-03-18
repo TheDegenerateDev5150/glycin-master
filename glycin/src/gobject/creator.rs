@@ -155,7 +155,7 @@ impl GlyCreator {
             let encoded_image: crate::EncodedImage = creator.create().await?;
             Ok(gobject::GlyEncodedImage::new(encoded_image))
         } else {
-            Err(Error::LoaderUsedTwice).err_no_context(&self.cancellable())
+            Err(Error::LoaderUsedTwice).err_no_context_legacy(&self.cancellable())
         }
     }
 }

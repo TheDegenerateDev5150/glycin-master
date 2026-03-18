@@ -86,7 +86,8 @@ pub trait ResultExt<T> {
         process: &RemoteProcess<S>,
         cancellable: &gio::Cancellable,
     ) -> Result<T, ErrorCtx>;
-    fn err_no_context(self, cancellable: &gio::Cancellable) -> Result<T, ErrorCtx>;
+    fn err_no_context_legacy(self, cancellable: &gio::Cancellable) -> Result<T, ErrorCtx>;
+    fn err_no_context(self) -> Result<T, ErrorCtx>;
 }
 
 impl<T> ResultExt<T> for Result<T, Error> {
@@ -115,7 +116,7 @@ impl<T> ResultExt<T> for Result<T, Error> {
         }
     }
 
-    fn err_no_context(self, cancellable: &gio::Cancellable) -> Result<T, ErrorCtx> {
+    fn err_no_context_legacy(self, cancellable: &gio::Cancellable) -> Result<T, ErrorCtx> {
         match self {
             Ok(x) => Ok(x),
             Err(err) => {
@@ -125,6 +126,13 @@ impl<T> ResultExt<T> for Result<T, Error> {
                     Err(ErrorCtx::from_error(err))
                 }
             }
+        }
+    }
+
+    fn err_no_context(self) -> Result<T, ErrorCtx> {
+        match self {
+            Ok(x) => Ok(x),
+            Err(err) => Err(ErrorCtx::from_error(err)),
         }
     }
 }

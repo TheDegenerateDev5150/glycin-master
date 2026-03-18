@@ -11,7 +11,7 @@ pub struct EditJpeg {
     buf: Vec<u8>,
 }
 
-pub fn load(mut stream: glycin_utils::UnixStream) -> Result<EditJpeg, glycin_utils::ProcessError> {
+pub fn load<S: Read>(mut stream: S) -> Result<EditJpeg, glycin_utils::ProcessError> {
     let mut buf: Vec<u8> = Vec::new();
     stream.read_to_end(&mut buf).internal_error()?;
     Ok(EditJpeg { buf })

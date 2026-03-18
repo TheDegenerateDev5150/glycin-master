@@ -1,7 +1,7 @@
 mod jpeg;
 mod png;
 
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 
 use glycin_utils::*;
 use image::{ExtendedColorType, ImageEncoder, ImageFormat};
@@ -12,8 +12,8 @@ pub enum ImgEditor {
 }
 
 impl EditorImplementation for ImgEditor {
-    fn edit(
-        stream: UnixStream,
+    fn edit<S: Read>(
+        stream: S,
         mime_type: String,
         _details: InitializationDetails,
     ) -> Result<Self, ProcessError> {

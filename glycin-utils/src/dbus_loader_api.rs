@@ -1,5 +1,6 @@
 // Copyright (c) 2024 GNOME Foundation Inc.
 
+use std::io::Read;
 use std::marker::PhantomData;
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
@@ -13,8 +14,8 @@ use crate::error::*;
 use crate::{ByteData, SharedMemory};
 
 pub trait LoaderImplementation: Send + Sync + Sized + 'static {
-    fn init<B: ByteData>(
-        stream: UnixStream,
+    fn init<B: ByteData, R: Read + Send + 'static>(
+        stream: R,
         mime_type: String,
         details: InitializationDetails,
     ) -> Result<(Self, ImageDetails<B>), ProcessError>;

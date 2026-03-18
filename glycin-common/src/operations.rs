@@ -24,7 +24,7 @@ pub enum OperationId {
     Rotate,
 }
 
-#[derive(Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
 #[serde(from = "OperationsIntermediate")]
 pub struct Operations {
     operations: Vec<Operation>,

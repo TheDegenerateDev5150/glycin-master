@@ -47,8 +47,8 @@ pub struct ImgDecoder {
 }
 
 impl LoaderImplementation for ImgDecoder {
-    fn init<B: ByteData>(
-        mut stream: UnixStream,
+    fn init<B: ByteData, R: Read>(
+        mut stream: R,
         mime_type: String,
         _details: InitializationDetails,
     ) -> Result<(Self, ImageDetails<B>), ProcessError> {

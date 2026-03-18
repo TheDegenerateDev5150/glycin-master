@@ -3,12 +3,53 @@ use std::path::{Path, PathBuf};
 
 use futures_util::{Stream, StreamExt};
 use gio::glib;
+use gio::prelude::CancellableExtManual;
 #[cfg(feature = "gdk4")]
 use glycin_utils::MemoryFormat;
 
 #[cfg(feature = "gdk4")]
 use crate::ColorState;
+use crate::ErrorCtx;
 use crate::sandbox::Sandbox;
+
+pub trait ShortcutErrorFuture<T, E>: Future<Output = Result<T, crate::Error>> + Sized
+where
+    E: Future<Output = Result<(), crate::Error>>,
+{
+    async fn join_abort_on_error(self, error_future: E) -> <Self as Future>::Output {
+        let self_ = std::pin::pin!(self);
+        let error_future = std::pin::pin!(error_future);
+        let either = futures_util::future::select(error_future, self_).await;
+
+        match either {
+            futures_util::future::Either::Left((Err(err), _)) => Err(err),
+            futures_util::future::Either::Left((Ok(_), f)) => f.await,
+            futures_util::future::Either::Right((res, _)) => res,
+        }
+    }
+}
+
+impl<F, T, E> ShortcutErrorFuture<T, E> for F
+where
+    F: Future<Output = Result<T, crate::Error>> + Sized,
+    E: Future<Output = Result<(), crate::Error>>,
+{
+}
+
+pub trait CancellableFuture<T>: Future<Output = Result<T, crate::ErrorCtx>> + Sized {
+    async fn make_cancellable(self, cancellable: gio::Cancellable) -> <Self as Future>::Output {
+        let self_ = std::pin::pin!(self);
+        let either = futures_util::future::select(cancellable.future(), self_).await;
+        match either {
+            futures_util::future::Either::Left(_) => {
+                Err(ErrorCtx::from_error(crate::Error::Canceled(None)))
+            }
+            futures_util::future::Either::Right((res, _)) => res,
+        }
+    }
+}
+
+impl<T, F: Future<Output = Result<T, crate::ErrorCtx>>> CancellableFuture<T> for F {}
 
 #[cfg(feature = "gdk4")]
 pub const fn gdk_memory_format(format: MemoryFormat) -> gdk::MemoryFormat {
@@ -288,3 +329,14 @@ pub fn spawn_timeout(
         f.await;
     }))
 }
+
+#[cfg(not(feature = "tokio"))]
+pub use futures_lite::AsyncWriteExt;
+#[cfg(feature = "tokio")]
+pub use tokio::io::AsyncWriteExt;
+
+#[cfg(not(feature = "tokio"))]
+pub type UnixStream = async_io::Async<std::os::unix::net::UnixStream>;
+
+#[cfg(feature = "tokio")]
+pub use tokio::net::UnixStream;

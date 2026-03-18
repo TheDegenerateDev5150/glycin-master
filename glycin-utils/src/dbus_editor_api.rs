@@ -1,6 +1,7 @@
 // Copyright (c) 2024 GNOME Foundation Inc.
 
-use std::io::{Cursor, Seek, SeekFrom, Write};
+use std::any::Any;
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
@@ -13,7 +14,7 @@ use zbus::zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type, as_v
 
 use crate::dbus_types::{self, *};
 use crate::error::*;
-use crate::{ByteData, SharedMemory};
+use crate::{ByteData, FungibleMemory, SharedMemory};
 
 #[derive(DeserializeDict, SerializeDict, Type, Debug)]
 #[zvariant(signature = "dict")]
@@ -142,6 +143,13 @@ impl<B: ByteData> CompleteEditorOutput<B> {
         let data = B::try_from_vec(data).expected_error()?;
         let info = EditorOutputInfo { lossless: true };
         Ok(Self { data, info })
+    }
+
+    pub fn into_fungible(self) -> CompleteEditorOutput<FungibleMemory> {
+        CompleteEditorOutput {
+            data: self.data.into_fungible(),
+            info: self.info,
+        }
     }
 }
 
@@ -291,8 +299,8 @@ impl<E: EditorImplementation> EditableImage<E> {
 pub trait EditorImplementation: Send + Sync + Sized + 'static {
     const USEABLE: bool = true;
 
-    fn edit(
-        stream: UnixStream,
+    fn edit<S: Read + Any>(
+        stream: S,
         mime_type: String,
         details: InitializationDetails,
     ) -> Result<Self, ProcessError>;
@@ -324,8 +332,8 @@ pub enum VoidEditorImplementation {}
 impl EditorImplementation for VoidEditorImplementation {
     const USEABLE: bool = false;
 
-    fn edit(
-        _stream: UnixStream,
+    fn edit<S: Read>(
+        _stream: S,
         _mime_type: String,
         _details: InitializationDetails,
     ) -> Result<Self, ProcessError> {

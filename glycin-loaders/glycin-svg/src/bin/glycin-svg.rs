@@ -1,4 +1,7 @@
+use std::any::Any;
 use std::io::{Cursor, Read};
+use std::os::fd::{AsFd, FromRawFd, OwnedFd};
+use std::os::unix;
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
@@ -30,22 +33,29 @@ pub struct Instruction {
     area: Option<rsvg::Rectangle>,
 }
 
-pub fn thread<B: ByteData>(
-    stream: UnixStream,
+pub fn thread<B: ByteData, S: Read + Any>(
+    mut source: S,
     base_file: Option<gio::File>,
     info_send: Sender<Result<ImageDetails<B>, ProcessError>>,
     frame_send: Sender<Result<Frame<B>, ProcessError>>,
     instr_recv: Receiver<Instruction>,
 ) {
-    let input_stream = gio_unix::InputStream::take_fd(stream.into());
+    let handle = if let Some(unix_stream) = <dyn Any>::downcast_ref::<UnixStream>(&source) {
+        let fd = unix_stream.as_fd().try_clone_to_owned().unwrap();
+        let input_stream = gio_unix::InputStream::take_fd((fd).into());
+        rsvg::Handle::from_stream_sync(
+            &input_stream,
+            base_file.as_ref(),
+            rsvg::HandleFlags::FLAGS_NONE,
+            gio::Cancellable::NONE,
+        )
+        .expected_error()
+    } else {
+        let mut data = Vec::new();
+        source.read_to_end(&mut data).unwrap();
 
-    let handle = rsvg::Handle::from_stream_sync(
-        &input_stream,
-        base_file.as_ref(),
-        rsvg::HandleFlags::FLAGS_NONE,
-        gio::Cancellable::NONE,
-    )
-    .expected_error();
+        rsvg::Handle::from_data(&data).expected_error()
+    };
 
     let handle = match handle {
         Ok(handle) => handle,
@@ -144,8 +154,8 @@ pub fn render<B: ByteData>(
 }
 
 impl LoaderImplementation for ImgDecoder {
-    fn init<B: ByteData>(
-        stream: UnixStream,
+    fn init<B: ByteData, S: Read + Send + 'static>(
+        stream: S,
         _mime_type: String,
         details: InitializationDetails,
     ) -> Result<(Self, ImageDetails<B>), ProcessError> {

@@ -103,7 +103,7 @@ impl GlyLoader {
         } else if let Some(bytes) = std::mem::take(&mut *self.imp().bytes.lock().unwrap()) {
             crate::Loader::new_bytes(bytes)
         } else {
-            return Err(Error::LoaderUsedTwice).err_no_context(&self.cancellable());
+            return Err(Error::LoaderUsedTwice).err_no_context_legacy(&self.cancellable());
         };
 
         loader.sandbox_selector = self.sandbox_selector();

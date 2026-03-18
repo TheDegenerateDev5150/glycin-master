@@ -1,13 +1,14 @@
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 #[cfg(feature = "gobject")]
 use gio::glib;
 use gio::prelude::*;
 
 use crate::config::{Config, ImageEditorConfig, ImageLoaderConfig};
-use crate::dbus::{EditorProxy, GFileWorker, LoaderProxy, ZbusProxy};
+use crate::dbus::{EditorProxy, LoaderProxy, ZbusProxy};
 use crate::pool::{Pool, PooledProcess, UsageTracker};
+use crate::source::SourceTransmission;
 use crate::util::RunEnvironment;
 use crate::{Error, MimeType, config};
 
@@ -117,10 +118,11 @@ impl Source {
         }
     }
 
-    pub fn to_stream(&self, cancellable: &gio::Cancellable) -> Result<gio::InputStream, Error> {
+    pub async fn to_stream(&self) -> Result<gio::InputStream, Error> {
         match self {
             Self::File(file) => file
-                .read(Some(cancellable))
+                .read_future(glib::Priority::DEFAULT)
+                .await
                 .map(|x| x.upcast())
                 .map_err(Error::ImageSource),
             Self::Stream(stream) => Ok(stream.0.clone()),
@@ -147,7 +149,7 @@ pub(crate) struct ProcessorContext<T: GetConfig> {
     pub mime_type: MimeType,
     pub sandbox_mechanism: SandboxMechanism,
     pub config_entry: T,
-    pub g_file_worker: Option<GFileWorker>,
+    pub g_file_worker: Option<SourceTransmission>,
     pub base_dir: Option<PathBuf>,
 }
 
@@ -195,11 +197,15 @@ impl<T: GetConfig + Clone> ProcessorContext<T> {
     ) -> Result<ProcessorContext<T>, Error> {
         let file = source.file();
 
-        let g_file_worker: GFileWorker = GFileWorker::spawn(source, cancellable.clone());
-        let mime_type = guess_mime_type(&g_file_worker).await?;
+        let source_transmission = SourceTransmission::init(source).await?;
+        let mime_type = guess_mime_type(
+            source_transmission.file(),
+            source_transmission.first_bytes(),
+        )
+        .await?;
 
         let config = config::Config::cached().await;
-        let config_entry = T::config_entry(&config, &mime_type)?.clone().clone();
+        let config_entry = T::config_entry(&config, &mime_type)?.clone();
 
         let base_dir = if use_expose_base_dir && config_entry.expose_base_dir() {
             file.and_then(|x| x.parent()).and_then(|x| x.path())
@@ -214,7 +220,24 @@ impl<T: GetConfig + Clone> ProcessorContext<T> {
             base_dir,
             mime_type,
             sandbox_mechanism,
-            g_file_worker: Some(g_file_worker),
+            g_file_worker: Some(source_transmission),
+        })
+    }
+
+    pub async fn new_sourceless(
+        mime_type: MimeType,
+        sandbox_selector: &SandboxSelector,
+    ) -> Result<ProcessorContext<T>, Error> {
+        let config = Config::cached().await;
+        let config_entry = T::config_entry(&config, &mime_type)?.clone();
+        let sandbox_mechanism = sandbox_selector.determine_sandbox_mechanism().await;
+
+        Ok(Self {
+            mime_type,
+            base_dir: None,
+            config_entry,
+            sandbox_mechanism,
+            g_file_worker: None,
         })
     }
 }
@@ -233,7 +256,7 @@ impl ProcessorContext<ImageLoaderConfig> {
             #[cfg(feature = "builtin")]
             config::Processor::Builtin(builtin) => Ok(Processor::Builtin(BuiltinProcessor {
                 builtin,
-                g_file_worker: self.g_file_worker,
+                source_transmission: self.g_file_worker,
                 mime_type: self.mime_type,
             })),
         }
@@ -257,7 +280,52 @@ impl ProcessorContext<ImageLoaderConfig> {
         Ok(BinaryProcessor {
             process,
             usage_tracker,
-            g_file_worker: self.g_file_worker,
+            source_transmission: self.g_file_worker,
+            mime_type: self.mime_type,
+            sandbox_mechanism: self.sandbox_mechanism,
+        })
+    }
+}
+
+impl ProcessorContext<ImageEditorConfig> {
+    pub async fn editor(
+        self,
+        pool: Arc<Pool>,
+        cancellable: &gio::Cancellable,
+    ) -> Result<Processor<EditorProxy<'static>>, Error> {
+        match self.config_entry.processor {
+            config::Processor::Binary(_) => self
+                .spin_up_editor(pool, cancellable)
+                .await
+                .map(Processor::Binary),
+            #[cfg(feature = "builtin")]
+            config::Processor::Builtin(builtin) => Ok(Processor::Builtin(BuiltinProcessor {
+                builtin,
+                source_transmission: self.g_file_worker,
+                mime_type: self.mime_type,
+            })),
+        }
+    }
+
+    async fn spin_up_editor<'a>(
+        self,
+        pool: Arc<Pool>,
+        cancellable: &gio::Cancellable,
+    ) -> Result<BinaryProcessor<EditorProxy<'static>>, Error> {
+        let (process, usage_tracker) = pool
+            .clone()
+            .get_editor(
+                self.config_entry,
+                self.sandbox_mechanism,
+                self.base_dir,
+                cancellable,
+            )
+            .await?;
+
+        Ok(BinaryProcessor {
+            process,
+            usage_tracker,
+            source_transmission: self.g_file_worker,
             mime_type: self.mime_type,
             sandbox_mechanism: self.sandbox_mechanism,
         })
@@ -272,7 +340,7 @@ pub(crate) enum Processor<P: ZbusProxy<'static> + 'static> {
 
 pub(crate) struct BinaryProcessor<P: ZbusProxy<'static> + 'static> {
     pub process: Arc<PooledProcess<P>>,
-    pub g_file_worker: Option<GFileWorker>,
+    pub source_transmission: Option<SourceTransmission>,
     pub mime_type: MimeType,
     pub sandbox_mechanism: SandboxMechanism,
     pub usage_tracker: Arc<UsageTracker>,
@@ -282,7 +350,7 @@ pub(crate) struct BinaryProcessor<P: ZbusProxy<'static> + 'static> {
 pub(crate) struct BuiltinProcessor {
     pub builtin: config::BuiltinProcessor,
     pub mime_type: MimeType,
-    pub g_file_worker: Option<GFileWorker>,
+    pub source_transmission: Option<SourceTransmission>,
 }
 
 impl<P: ZbusProxy<'static> + 'static> BinaryProcessor<P> {
@@ -291,58 +359,11 @@ impl<P: ZbusProxy<'static> + 'static> BinaryProcessor<P> {
     }
 }
 
-pub(crate) async fn spin_up_editor<'a>(
-    source: Source,
-    pool: Arc<Pool>,
-    cancellable: &gio::Cancellable,
-    sandbox_selector: &SandboxSelector,
-) -> Result<BinaryProcessor<EditorProxy<'static>>, Error> {
-    let processor_context =
-        ProcessorContext::new(source, false, cancellable, sandbox_selector).await?;
-
-    let (process, usage_tracker) = pool
-        .get_editor(
-            processor_context.config_entry,
-            processor_context.sandbox_mechanism,
-            processor_context.base_dir,
-            cancellable,
-        )
-        .await?;
-
-    Ok(BinaryProcessor {
-        process,
-        g_file_worker: processor_context.g_file_worker,
-        mime_type: processor_context.mime_type,
-        sandbox_mechanism: processor_context.sandbox_mechanism,
-        usage_tracker,
-    })
-}
-
-pub(crate) async fn spin_up_encoder<'a>(
-    mime_type: MimeType,
-    pool: Arc<Pool>,
-    cancellable: &gio::Cancellable,
-    sandbox_selector: &SandboxSelector,
-) -> Result<BinaryProcessor<EditorProxy<'static>>, Error> {
-    let config_entry = Config::cached().await.editor(&mime_type)?.clone();
-    let sandbox_mechanism = sandbox_selector.determine_sandbox_mechanism().await;
-
-    let (process, usage_tracker) = pool
-        .get_editor(config_entry, sandbox_mechanism, None, cancellable)
-        .await?;
-
-    Ok(BinaryProcessor {
-        process,
-        g_file_worker: None,
-        mime_type,
-        sandbox_mechanism,
-        usage_tracker,
-    })
-}
-
-pub(crate) async fn guess_mime_type(gfile_worker: &GFileWorker) -> Result<MimeType, Error> {
-    let head = gfile_worker.head().await?;
-    let (content_type, unsure) = gio::content_type_guess(None::<String>, head.as_slice());
+pub(crate) async fn guess_mime_type(
+    file: Option<&gio::File>,
+    head: &[u8],
+) -> Result<MimeType, Error> {
+    let (content_type, unsure) = gio::content_type_guess(None::<String>, head);
     let mime_type = gio::content_type_get_mime_type(&content_type)
         .ok_or_else(|| Error::UnknownContentType(content_type.to_string()));
 
@@ -360,9 +381,9 @@ pub(crate) async fn guess_mime_type(gfile_worker: &GFileWorker) -> Result<MimeTy
     let is_text = mime_type.clone().ok() == Some("text/plain".into());
 
     if (unsure || is_tiff || is_xml || is_gzip || is_text)
-        && let Some(filename) = gfile_worker.file().and_then(|x| x.basename())
+        && let Some(filename) = file.and_then(|x| x.basename())
     {
-        let content_type_fn = gio::content_type_guess(Some(filename), head.as_slice()).0;
+        let content_type_fn = gio::content_type_guess(Some(filename), head).0;
         return gio::content_type_get_mime_type(&content_type_fn)
             .ok_or_else(|| Error::UnknownContentType(content_type_fn.to_string()))
             .map(|x| MimeType::new(x.to_string()));
@@ -370,3 +391,46 @@ pub(crate) async fn guess_mime_type(gfile_worker: &GFileWorker) -> Result<MimeTy
 
     mime_type.map(|x| MimeType::new(x.to_string()))
 }
+
+static CHECK_MAIN_CONTEXT: LazyLock<std::sync::Mutex<()>> = LazyLock::new(Default::default);
+pub trait ProvidesMainContext {
+    fn main_context(&self) -> glib::MainContext {
+        if let Some(thread_context) = glib::MainContext::thread_default() {
+            tracing::debug!("Using current threads default MainContext.");
+            // Current thread has a default MainContext
+            thread_context
+        } else {
+            let check_main_context_lock = CHECK_MAIN_CONTEXT.lock().unwrap();
+            let default_thread = glib::MainContext::default();
+            let global_default_has_main_loop = default_thread.acquire().is_err();
+            drop(check_main_context_lock);
+
+            if global_default_has_main_loop {
+                tracing::debug!("Using global default MainContext.");
+                // Default thread is running on some other thread
+                default_thread.clone()
+            } else {
+                tracing::debug!("Using global glycin MainContext.");
+                static GLYCIN_MAIN_CONTEXT: LazyLock<glib::MainContext> = LazyLock::new(|| {
+                    tracing::debug!("Creating glycin global MainContext.");
+
+                    let main_context = glib::MainContext::new();
+                    let main_loop = glib::MainLoop::new(Some(&main_context), true);
+
+                    std::thread::spawn(glib::clone!(
+                        #[strong]
+                        main_context,
+                        move || main_context.with_thread_default(|| main_loop.run())
+                    ));
+
+                    main_context
+                });
+                // Return global glycin MainContext
+                (*GLYCIN_MAIN_CONTEXT).clone()
+            }
+        }
+    }
+}
+
+impl ProvidesMainContext for crate::Loader {}
+impl ProvidesMainContext for crate::Editor {}

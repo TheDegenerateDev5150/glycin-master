@@ -40,8 +40,8 @@ pub fn render<B: ByteData>(rawdata: &libopenraw::RawImage) -> Result<Frame<B>, P
 }
 
 impl LoaderImplementation for ImgDecoder {
-    fn init<B: ByteData>(
-        mut stream: UnixStream,
+    fn init<B: ByteData, S: Read>(
+        mut stream: S,
         _mime_type: String,
         _details: InitializationDetails,
     ) -> Result<(ImgDecoder, ImageDetails<B>), ProcessError> {

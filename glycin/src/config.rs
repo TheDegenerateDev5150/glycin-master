@@ -468,7 +468,7 @@ pub enum BuiltinProcessor {
 
 #[cfg(feature = "builtin")]
 impl BuiltinProcessor {
-    fn common(&self) -> &dyn glycin_utils::Builtin {
+    pub fn common(&self) -> &dyn glycin_utils::Builtin {
         match self {
             #[cfg(feature = "builtin-image-rs")]
             Self::ImageRs(processor) => processor,

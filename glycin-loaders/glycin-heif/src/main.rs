@@ -22,8 +22,8 @@ pub struct ImgDecoder {
 unsafe impl Sync for ImgDecoder {}
 
 impl LoaderImplementation for ImgDecoder {
-    fn init<B: ByteData>(
-        mut stream: UnixStream,
+    fn init<B: ByteData, S: Read>(
+        mut stream: S,
         mime_type: String,
         _details: InitializationDetails,
     ) -> Result<(Self, ImageDetails<B>), ProcessError> {

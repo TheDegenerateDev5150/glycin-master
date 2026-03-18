@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+use futures_util::FutureExt;
 use gio::glib;
 use gio::prelude::{IsA, *};
 use glycin_utils::safe_math::SafeConversion;
 use glycin_utils::{
-    ByteChanges, CompleteEditorOutput, Operations, SharedMemory, SparseEditorOutput,
+    ByteChanges, ByteData, CompleteEditorOutput, EditorImplementation, FungibleMemory,
+    InitializationDetails, Operations, SharedMemory, SparseEditorOutput,
 };
 use zbus::zvariant::OwnedObjectPath;
 
@@ -13,7 +15,7 @@ use crate::api_common::*;
 use crate::dbus::EditorProxy;
 use crate::error::ResultExt;
 use crate::pool::{Pool, PooledProcess};
-use crate::util::spawn_detached;
+use crate::util::{CancellableFuture, ShortcutErrorFuture, spawn_detached};
 use crate::{Error, ErrorCtx, MimeType, config, util};
 
 /// Image edit builder
@@ -38,47 +40,101 @@ impl Editor {
         }
     }
 
-    pub async fn edit(mut self) -> Result<EditableImage, ErrorCtx> {
+    pub async fn edit(self) -> Result<EditableImage, ErrorCtx> {
+        let main_context = self.main_context();
+        let cancellable = self.cancellable.clone();
+
+        let f = || async move { self.edit_internal().await }.make_cancellable(cancellable);
+
+        main_context.spawn_from_within(f).await.unwrap()
+    }
+
+    pub async fn edit_internal(mut self) -> Result<EditableImage, ErrorCtx> {
         let source: Source = self.source.send();
 
-        let process_context = spin_up_editor(
-            source,
-            self.pool.clone(),
-            &self.cancellable,
-            &self.sandbox_selector,
-        )
-        .await
-        .err_no_context(&self.cancellable)?;
+        let editor_context =
+            ProcessorContext::new(source, false, &self.cancellable, &self.sandbox_selector)
+                .await
+                .err_no_context_legacy(&self.cancellable)?;
 
-        let process = process_context.process.use_();
-
-        let editable_image = process
-            .edit(
-                &process_context.g_file_worker.unwrap(),
-                &process_context.mime_type,
-            )
+        let editor = editor_context
+            .editor(self.pool.clone(), &self.cancellable)
             .await
-            .err_context(&process, &self.cancellable)?;
+            .err_no_context_legacy(&self.cancellable)?;
 
-        self.cancellable.connect_cancelled(glib::clone!(
-            #[strong(rename_to=process)]
-            process_context.process,
-            #[strong(rename_to=path)]
-            editable_image.edit_request,
-            move |_| {
-                tracing::debug!("Terminating loader");
-                crate::util::spawn_detached(process.use_().done(path))
+        match editor {
+            Processor::Binary(editor) => {
+                let process = editor.process.use_();
+
+                let (external_reader, load_image_future) = editor
+                    .source_transmission
+                    .unwrap()
+                    .spawn_external()
+                    .err_no_context()?;
+
+                let editable_image_future = process.edit(external_reader, &editor.mime_type);
+
+                let editable_image = editable_image_future
+                    .join_abort_on_error(load_image_future)
+                    .await
+                    .err_context(&process, &self.cancellable)?;
+
+                self.cancellable.connect_cancelled(glib::clone!(
+                    #[strong(rename_to=process)]
+                    editor.process,
+                    #[strong(rename_to=path)]
+                    editable_image.edit_request,
+                    move |_| {
+                        tracing::debug!("Terminating loader");
+                        crate::util::spawn_detached(process.use_().done(path))
+                    }
+                ));
+
+                Ok(EditableImage {
+                    editor: self,
+                    image_editor: ImageEditor::Remote(ImageEditorRemote {
+                        _active_sandbox_mechanism: editor.sandbox_mechanism,
+                        process: editor.process,
+                        editor_alive: Default::default(),
+                        edit_request: editable_image.edit_request,
+                    }),
+                    _mime_type: editor.mime_type,
+                })
             }
-        ));
+            #[cfg(feature = "builtin")]
+            Processor::Builtin(builtin) => {
+                let mime_type = builtin.mime_type.clone();
 
-        Ok(EditableImage {
-            _active_sandbox_mechanism: process_context.sandbox_mechanism,
-            editor: self,
-            editor_alive: Default::default(),
-            edit_request: editable_image.edit_request,
-            _mime_type: process_context.mime_type,
-            process: process_context.process,
-        })
+                match builtin.builtin {
+                    #[cfg(feature = "builtin-image-rs")]
+                    config::BuiltinProcessor::ImageRs(_) => {
+                        let (builtin_reader, read_data_future) =
+                            builtin.source_transmission.unwrap().spawn_builtin();
+
+                        let editor_future = gio::spawn_blocking(move || {
+                            glycin_image_rs::ImgEditor::edit(
+                                builtin_reader,
+                                builtin.mime_type.to_string(),
+                                InitializationDetails::default(),
+                            )
+                            .map_err(|err| Error::from(err.into_editor_error()))
+                        })
+                        .map(|x| x.unwrap());
+
+                        let editor = editor_future
+                            .join_abort_on_error(read_data_future)
+                            .await
+                            .err_no_context()?;
+
+                        Ok(EditableImage {
+                            editor: self,
+                            image_editor: ImageEditor::Local(ImageEditorLocal::ImageRs(editor)),
+                            _mime_type: mime_type,
+                        })
+                    }
+                }
+            }
+        }
     }
 
     /// Sets the method by which the sandbox mechanism is selected.
@@ -96,22 +152,21 @@ impl Editor {
     }
 }
 
-#[derive(Debug)]
 pub struct EditableImage {
     pub(crate) editor: Editor,
-    pub(crate) process: Arc<PooledProcess<EditorProxy<'static>>>,
-    edit_request: OwnedObjectPath,
+    image_editor: ImageEditor,
     // TODO: Use in error messages
     _mime_type: MimeType,
-    _active_sandbox_mechanism: SandboxMechanism,
-    editor_alive: Mutex<Arc<()>>,
 }
 
 impl Drop for EditableImage {
     fn drop(&mut self) {
-        self.process.use_().done_background(self);
-        *self.editor_alive.lock().unwrap() = Arc::new(());
-        spawn_detached(self.editor.pool.clone().clean_loaders());
+        #[allow(irrefutable_let_patterns)]
+        if let ImageEditor::Remote(editor) = &self.image_editor {
+            editor.process.use_().done_background(self);
+            *editor.editor_alive.lock().unwrap() = Arc::new(());
+            spawn_detached(self.editor.pool.clone().clean_loaders());
+        }
     }
 }
 
@@ -122,28 +177,63 @@ impl EditableImage {
     /// changing one or a few bytes in a file. We call these cases *sparse* and
     /// a [`SparseEdit::Sparse`] is returned.
     pub async fn apply_sparse(self, operations: &Operations) -> Result<SparseEdit, ErrorCtx> {
-        let process = self.process.use_();
+        match &self.image_editor {
+            ImageEditor::Remote(editor) => {
+                let process = editor.process.use_();
 
-        let editor_output = process
-            .editor_apply_sparse(operations, &self)
-            .await
-            .err_context(&process, &self.editor.cancellable)?;
+                let editor_output = process
+                    .editor_apply_sparse(operations, &self)
+                    .await
+                    .err_context(&process, &self.editor.cancellable)?;
 
-        SparseEdit::try_from(editor_output).err_no_context(&self.editor.cancellable)
+                SparseEdit::try_from(editor_output).err_no_context_legacy(&self.editor.cancellable)
+            }
+            #[cfg(feature = "builtin")]
+            ImageEditor::Local(editor) => match editor {
+                #[cfg(feature = "builtin-image-rs")]
+                ImageEditorLocal::ImageRs(editor) => {
+                    let editor_output = editor
+                        .apply_sparse(operations.to_owned())
+                        .map_err(|e| e.into_editor_error().into())
+                        .err_no_context_legacy(&self.editor.cancellable)?;
+
+                    SparseEdit::try_from(editor_output)
+                        .err_no_context_legacy(&self.editor.cancellable)
+                }
+            },
+        }
     }
 
     /// Apply operations to the image
     pub async fn apply_complete(self, operations: &Operations) -> Result<Edit, ErrorCtx> {
-        let process = self.process.use_();
+        match &self.image_editor {
+            ImageEditor::Remote(editor) => {
+                let process = editor.process.use_();
 
-        let editor_output = process
-            .editor_apply_complete(operations, &self)
-            .await
-            .err_context(&process, &self.editor.cancellable)?;
+                let editor_output = process
+                    .editor_apply_complete(operations, &self)
+                    .await
+                    .err_context(&process, &self.editor.cancellable)?
+                    .into_fungible();
 
-        Ok(Edit {
-            inner: editor_output,
-        })
+                Ok(Edit {
+                    inner: editor_output,
+                })
+            }
+            #[cfg(feature = "builtin")]
+            ImageEditor::Local(editor) => match editor {
+                ImageEditorLocal::ImageRs(editor) => {
+                    let editor_output = editor
+                        .apply_complete(operations.to_owned())
+                        .map_err(|e| e.into_editor_error().into())
+                        .err_no_context_legacy(&self.editor.cancellable)?;
+
+                    Ok(Edit {
+                        inner: editor_output,
+                    })
+                }
+            },
+        }
     }
 
     /// List all configured image editors
@@ -153,8 +243,31 @@ impl EditableImage {
     }
 
     pub(crate) fn edit_request_path(&self) -> OwnedObjectPath {
-        self.edit_request.clone()
+        #[allow(irrefutable_let_patterns)]
+        if let ImageEditor::Remote(editor) = &self.image_editor {
+            editor.edit_request.clone()
+        } else {
+            todo!()
+        }
     }
+}
+
+enum ImageEditor {
+    Remote(ImageEditorRemote),
+    #[cfg(feature = "builtin")]
+    Local(ImageEditorLocal),
+}
+
+struct ImageEditorRemote {
+    pub(crate) process: Arc<PooledProcess<EditorProxy<'static>>>,
+    edit_request: OwnedObjectPath,
+    _active_sandbox_mechanism: SandboxMechanism,
+    editor_alive: Mutex<Arc<()>>,
+}
+
+enum ImageEditorLocal {
+    #[cfg(feature = "builtin-image-rs")]
+    ImageRs(glycin_image_rs::ImgEditor),
 }
 
 #[derive(Debug)]
@@ -167,12 +280,12 @@ pub enum SparseEdit {
     /// apply these changes.
     Sparse(ByteChanges),
     /// The operations require to completely rewrite the image.
-    Complete(SharedMemory),
+    Complete(FungibleMemory),
 }
 
 #[derive(Debug)]
 pub struct Edit {
-    inner: CompleteEditorOutput<SharedMemory>,
+    inner: CompleteEditorOutput<FungibleMemory>,
 }
 
 impl Edit {
@@ -240,7 +353,7 @@ impl TryFrom<SparseEditorOutput<SharedMemory>> for SparseEdit {
         } else if let Some(bit_changes) = value.byte_changes {
             Ok(Self::Sparse(bit_changes))
         } else if let Some(data) = value.data {
-            Ok(Self::Complete(data))
+            Ok(Self::Complete(data.into_fungible()))
         } else {
             Err(Error::RemoteError(
                 glycin_utils::RemoteError::InternalLoaderError(

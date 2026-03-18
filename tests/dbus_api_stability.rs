@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::os::unix::net::UnixStream;
 
 #[test]
@@ -87,8 +88,8 @@ impl glycin_utils::LoaderImplementation for MockLoader {
         unimplemented!()
     }
 
-    fn init<B: glycin_utils::ByteData>(
-        _stream: UnixStream,
+    fn init<B: glycin_utils::ByteData, R: Read>(
+        _stream: R,
         _mime_type: String,
         _details: glycin_utils::InitializationDetails,
     ) -> Result<(Self, glycin_utils::ImageDetails<B>), glycin_utils::ProcessError> {
@@ -106,8 +107,8 @@ fn mock_loader() -> glycin_utils::Loader<MockLoader> {
 struct MockEditor {}
 
 impl glycin_utils::EditorImplementation for MockEditor {
-    fn edit(
-        _stream: UnixStream,
+    fn edit<S>(
+        _stream: S,
         _mime_type: String,
         _details: glycin_utils::InitializationDetails,
     ) -> Result<Self, glycin_utils::ProcessError> {

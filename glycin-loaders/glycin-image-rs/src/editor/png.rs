@@ -13,7 +13,7 @@ pub struct EditorPng {
     editing_frame: glycin_utils::editing::EditingFrame<LocalMemory>,
 }
 
-pub fn load(mut stream: glycin_utils::UnixStream) -> Result<EditorPng, glycin_utils::ProcessError> {
+pub fn load<S: Read>(mut stream: S) -> Result<EditorPng, glycin_utils::ProcessError> {
     let mut old_png_data: Vec<u8> = Vec::new();
     stream.read_to_end(&mut old_png_data).internal_error()?;
     let cursor = Cursor::new(&old_png_data);

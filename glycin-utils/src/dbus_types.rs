@@ -31,7 +31,7 @@ const fn true_const() -> bool {
     true
 }
 
-#[derive(Deserialize, Serialize, Type, Debug, Clone, Default)]
+#[derive(Deserialize, Serialize, Type, Debug, Clone)]
 #[zvariant(signature = "dict")]
 #[non_exhaustive]
 pub struct FrameRequest {
@@ -44,6 +44,16 @@ pub struct FrameRequest {
     /// Get first frame, if previously selected frame was the last one
     #[serde(with = "as_value", default = "true_const")]
     pub loop_animation: bool,
+}
+
+impl Default for FrameRequest {
+    fn default() -> Self {
+        Self {
+            scale: None,
+            clip: None,
+            loop_animation: true,
+        }
+    }
 }
 
 /// Various image metadata

@@ -75,6 +75,7 @@ mod orientation;
 mod pool;
 mod remote_utils;
 mod sandbox;
+mod source;
 mod util;
 
 #[cfg(feature = "gobject")]
