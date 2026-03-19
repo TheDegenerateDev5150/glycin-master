@@ -135,6 +135,7 @@ pub struct ImageLoaderConfig {
 
 #[derive(Debug, Clone)]
 pub enum Processor {
+    #[cfg(feature = "external")]
     Binary(PathBuf),
     #[cfg(feature = "builtin")]
     Builtin(BuiltinProcessor),
@@ -163,6 +164,7 @@ impl Ord for Processor {
 impl Processor {
     pub fn exec(&self) -> Option<&Path> {
         match self {
+            #[cfg(feature = "external")]
             Self::Binary(path) => Some(path.as_path()),
             #[cfg(feature = "builtin")]
             Self::Builtin(_) => None,
@@ -171,6 +173,7 @@ impl Processor {
 
     pub fn hash(&self) -> &[u8] {
         match self {
+            #[cfg(feature = "external")]
             Self::Binary(path) => path.as_os_str().as_bytes(),
             #[cfg(feature = "builtin")]
             Self::Builtin(builtin) => builtin.common().name().as_bytes(),
@@ -290,6 +293,7 @@ impl Config {
         )
         .await;
 
+        #[cfg(feature = "external")]
         for mut data_dir in Self::data_dirs() {
             data_dir.push("glycin-loaders");
             data_dir.push(format!("{COMPAT_VERSION}+"));
@@ -324,6 +328,7 @@ impl Config {
         config: &mut Config,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let data = match &loader {
+            #[cfg(feature = "external")]
             ConfigLoader::File(path) => {
                 tracing::trace!("Loading config file {path:?}");
                 read(path).await?
@@ -353,6 +358,7 @@ impl Config {
 
                         if let Ok(exec) = keyfile.string(group, "Exec") {
                             let processor = match loader {
+                                #[cfg(feature = "external")]
                                 ConfigLoader::File(_) => Processor::Binary(exec.into()),
                                 #[cfg(feature = "builtin")]
                                 ConfigLoader::Builtin(ref builtin) => {
@@ -381,6 +387,7 @@ impl Config {
 
                         if let Ok(exec) = keyfile.string(group, "Exec") {
                             let processor = match loader {
+                                #[cfg(feature = "external")]
                                 ConfigLoader::File(_) => Processor::Binary(exec.into()),
                                 #[cfg(feature = "builtin")]
                                 ConfigLoader::Builtin(ref builtin) => {
@@ -454,6 +461,7 @@ impl Config {
 }
 
 pub enum ConfigLoader {
+    #[cfg(feature = "external")]
     File(PathBuf),
     #[cfg(feature = "builtin")]
     Builtin(BuiltinProcessor),

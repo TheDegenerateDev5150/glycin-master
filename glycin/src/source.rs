@@ -35,6 +35,7 @@ impl SourceTransmission {
         })
     }
 
+    #[cfg(feature = "external")]
     async fn spawn_with_stream(self, mut stream: util::UnixStream) -> Result<(), Error> {
         stream.write_all(&self.first_bytes).await?;
 
@@ -54,6 +55,7 @@ impl SourceTransmission {
         }
     }
 
+    #[cfg(feature = "external")]
     pub fn spawn_external(
         self,
     ) -> Result<(UnixStream, impl Future<Output = Result<(), Error>>), Error> {

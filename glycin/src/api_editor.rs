@@ -15,11 +15,13 @@ use glycin_utils::{
 use zbus::zvariant::OwnedObjectPath;
 
 use crate::api_common::*;
+#[cfg(feature = "external")]
 use crate::dbus::EditorProxy;
 use crate::error::ResultExt;
-use crate::pool::{Pool, PooledProcess};
+#[cfg(feature = "external")]
+use crate::pool::PooledProcess;
 use crate::util::{CancellableFuture, ShortcutErrorFuture, spawn_detached};
-use crate::{Error, ErrorCtx, MimeType, config, util};
+use crate::{Error, ErrorCtx, MimeType, Pool, config, util};
 
 /// Image edit builder
 #[derive(Debug)]
@@ -69,6 +71,7 @@ impl Editor {
             .err_no_context_legacy(&self.cancellable)?;
 
         match editor {
+            #[cfg(feature = "external")]
             Processor::Binary(editor) => {
                 let process = editor.process.use_();
 
@@ -168,6 +171,7 @@ pub struct EditableImage {
 
 impl Drop for EditableImage {
     fn drop(&mut self) {
+        #[cfg(feature = "external")]
         #[allow(irrefutable_let_patterns)]
         if let ImageEditor::External(editor) = &self.image_editor {
             editor.process.use_().done_background(self);
@@ -185,6 +189,7 @@ impl EditableImage {
     /// a [`SparseEdit::Sparse`] is returned.
     pub async fn apply_sparse(self, operations: &Operations) -> Result<SparseEdit, ErrorCtx> {
         match &self.image_editor {
+            #[cfg(feature = "external")]
             ImageEditor::External(editor) => {
                 let process = editor.process.use_();
 
@@ -216,6 +221,7 @@ impl EditableImage {
     /// Apply operations to the image
     pub async fn apply_complete(self, operations: &Operations) -> Result<Edit, ErrorCtx> {
         match &self.image_editor {
+            #[cfg(feature = "external")]
             ImageEditor::External(editor) => {
                 let process = editor.process.use_();
 
@@ -253,6 +259,7 @@ impl EditableImage {
         config.image_editor.clone()
     }
 
+    #[cfg(feature = "external")]
     pub(crate) fn edit_request_path(&self) -> OwnedObjectPath {
         #[allow(irrefutable_let_patterns)]
         if let ImageEditor::External(editor) = &self.image_editor {
@@ -264,11 +271,13 @@ impl EditableImage {
 }
 
 enum ImageEditor {
+    #[cfg(feature = "external")]
     External(ImageEditorExternal),
     #[cfg(feature = "builtin")]
     Builtin(ImageEditorBuiltin),
 }
 
+#[cfg(feature = "external")]
 struct ImageEditorExternal {
     pub(crate) process: Arc<PooledProcess<EditorProxy<'static>>>,
     edit_request: OwnedObjectPath,

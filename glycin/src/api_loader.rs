@@ -17,11 +17,13 @@ use zbus::zvariant::OwnedObjectPath;
 
 use crate::api_common::*;
 pub use crate::config::MimeType;
+#[cfg(feature = "external")]
 use crate::dbus::*;
 use crate::error::ResultExt;
-use crate::pool::{Pool, PooledProcess, UsageTracker};
+#[cfg(feature = "external")]
+use crate::pool::{PooledProcess, UsageTracker};
 use crate::util::{spawn_blocking, spawn_detached};
-use crate::{Error, ErrorCtx, config, icc, orientation, util};
+use crate::{Error, ErrorCtx, MAX_TEXTURE_SIZE, Pool, config, icc, orientation, util};
 
 /// Image request builder
 #[derive(Debug)]
@@ -123,6 +125,7 @@ impl Loader {
         self
     }
 
+    #[cfg(feature = "external")]
     pub fn pool(&mut self, pool: Arc<Pool>) -> &mut Self {
         self.pool = pool;
         self
@@ -155,12 +158,14 @@ impl Loader {
             .err_no_context()?;
 
         match loader {
+            #[cfg(feature = "external")]
             Processor::Binary(binary_loader) => self.load_internal_external(binary_loader).await,
             #[cfg(feature = "builtin")]
             Processor::Builtin(builtin) => self.load_internal_builtin(builtin).await,
         }
     }
 
+    #[cfg(feature = "external")]
     async fn load_internal_external(
         self,
         binary_loader: BinaryProcessor<LoaderProxy<'static>>,
@@ -208,7 +213,7 @@ impl Loader {
         let mime_type = binary_loader.mime_type.clone();
 
         Ok(Image {
-            image_loader: ImageLoader::Binary(ImageBinaryLoader {
+            image_loader: ImageLoader::Binary(ImageExternalLoader {
                 process: binary_loader.process,
                 active_sandbox_mechanism: binary_loader.sandbox_mechanism,
                 usage_tracker: Mutex::new(Some(binary_loader.usage_tracker)),
@@ -221,7 +226,10 @@ impl Loader {
     }
 
     #[cfg(feature = "builtin")]
-    async fn load_internal_builtin(self, builtin: BuiltinProcessor) -> Result<Image, ErrorCtx> {
+    async fn load_internal_builtin<P: DBusProxy>(
+        self,
+        builtin: BuiltinProcessor<P>,
+    ) -> Result<Image, ErrorCtx> {
         tracing::debug!("Using builtin loader '{}'", builtin.builtin.common().name());
 
         match builtin.builtin {
@@ -316,6 +324,7 @@ static_assertions::assert_impl_all!(Image: Send, Sync);
 
 impl Drop for Image {
     fn drop(&mut self) {
+        #[cfg(feature = "external")]
         #[allow(irrefutable_let_patterns)]
         if let ImageLoader::Binary(image_loader) = &self.image_loader {
             let process = image_loader.process.clone();
@@ -340,6 +349,7 @@ impl Image {
     /// function will loop to the first frame, when the last frame is reached.
     pub async fn next_frame(&self) -> Result<Frame, ErrorCtx> {
         match &self.image_loader {
+            #[cfg(feature = "external")]
             ImageLoader::Binary(image_loader) => {
                 let process = image_loader.process.use_();
 
@@ -380,6 +390,7 @@ impl Image {
     /// instructions in the `FrameRequest`.
     pub async fn specific_frame(&self, frame_request: FrameRequest) -> Result<Frame, ErrorCtx> {
         match &self.image_loader {
+            #[cfg(feature = "external")]
             ImageLoader::Binary(image_loader) => {
                 let process = image_loader.process.use_();
 
@@ -418,6 +429,7 @@ impl Image {
     }
 
     /// Returns already obtained info
+    #[cfg(feature = "external")]
     pub(crate) fn frame_request_path(&self) -> OwnedObjectPath {
         #[allow(irrefutable_let_patterns)]
         if let ImageLoader::Binary(image_loader) = &self.image_loader {
@@ -447,6 +459,7 @@ impl Image {
     /// Active sandbox mechanism
     pub fn active_sandbox_mechanism(&self) -> SandboxMechanism {
         match &self.image_loader {
+            #[cfg(feature = "external")]
             ImageLoader::Binary(image_loader) => image_loader.active_sandbox_mechanism,
             #[cfg(feature = "builtin")]
             ImageLoader::Builtin(_) => SandboxMechanism::NotSandboxed,
@@ -488,13 +501,15 @@ impl Image {
 
 #[derive(Debug)]
 enum ImageLoader {
-    Binary(ImageBinaryLoader),
+    #[cfg(feature = "external")]
+    Binary(ImageExternalLoader),
     #[cfg(feature = "builtin")]
     Builtin(ImageBuiltinLoader),
 }
 
+#[cfg(feature = "external")]
 #[derive(Debug)]
-struct ImageBinaryLoader {
+struct ImageExternalLoader {
     process: Arc<PooledProcess<LoaderProxy<'static>>>,
     active_sandbox_mechanism: SandboxMechanism,
     usage_tracker: Mutex<Option<Arc<UsageTracker>>>,

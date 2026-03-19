@@ -1,3 +1,5 @@
+#[cfg(feature = "builtin")]
+use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 
@@ -6,11 +8,14 @@ use gio::glib;
 use gio::prelude::*;
 
 use crate::config::{Config, ImageEditorConfig, ImageLoaderConfig};
-use crate::dbus::{EditorProxy, LoaderProxy, ZbusProxy};
-use crate::pool::{Pool, PooledProcess, UsageTracker};
+#[cfg(feature = "external")]
+use crate::dbus::ZbusProxy;
+use crate::dbus::{EditorProxy, LoaderProxy};
+#[cfg(feature = "external")]
+use crate::pool::{PooledProcess, UsageTracker};
 use crate::source::SourceTransmission;
 use crate::util::RunEnvironment;
-use crate::{Error, MimeType, config};
+use crate::{Error, MimeType, Pool, config};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 /// Sandboxing mechanism for image loading and editing
@@ -248,6 +253,7 @@ impl ProcessorContext<ImageLoaderConfig> {
         cancellable: &gio::Cancellable,
     ) -> Result<Processor<LoaderProxy<'static>>, Error> {
         match self.config_entry.processor {
+            #[cfg(feature = "external")]
             config::Processor::Binary(_) => self
                 .spin_up_loader(pool, cancellable)
                 .await
@@ -257,10 +263,12 @@ impl ProcessorContext<ImageLoaderConfig> {
                 builtin,
                 source_transmission: self.g_file_worker,
                 mime_type: self.mime_type,
+                _phantom_data: Default::default(),
             })),
         }
     }
 
+    #[cfg(feature = "external")]
     async fn spin_up_loader<'a>(
         self,
         pool: Arc<Pool>,
@@ -293,6 +301,7 @@ impl ProcessorContext<ImageEditorConfig> {
         cancellable: &gio::Cancellable,
     ) -> Result<Processor<EditorProxy<'static>>, Error> {
         match self.config_entry.processor {
+            #[cfg(feature = "external")]
             config::Processor::Binary(_) => self
                 .spin_up_editor(pool, cancellable)
                 .await
@@ -302,10 +311,12 @@ impl ProcessorContext<ImageEditorConfig> {
                 builtin,
                 source_transmission: self.g_file_worker,
                 mime_type: self.mime_type,
+                _phantom_data: Default::default(),
             })),
         }
     }
 
+    #[cfg(feature = "external")]
     async fn spin_up_editor<'a>(
         self,
         pool: Arc<Pool>,
@@ -330,14 +341,25 @@ impl ProcessorContext<ImageEditorConfig> {
         })
     }
 }
+#[cfg(feature = "external")]
+pub trait DBusProxy: ZbusProxy<'static> + 'static {}
+#[cfg(not(feature = "external"))]
+pub trait DBusProxy: 'static {}
 
-pub(crate) enum Processor<P: ZbusProxy<'static> + 'static> {
+impl DBusProxy for LoaderProxy<'static> {}
+impl DBusProxy for EditorProxy<'static> {}
+
+//impl DBusProxy for () {}
+
+pub(crate) enum Processor<P: DBusProxy> {
+    #[cfg(feature = "external")]
     Binary(BinaryProcessor<P>),
     #[cfg(feature = "builtin")]
-    Builtin(BuiltinProcessor),
+    Builtin(BuiltinProcessor<P>),
 }
 
-pub(crate) struct BinaryProcessor<P: ZbusProxy<'static> + 'static> {
+#[cfg(feature = "external")]
+pub(crate) struct BinaryProcessor<P: DBusProxy> {
     pub process: Arc<PooledProcess<P>>,
     pub source_transmission: Option<SourceTransmission>,
     pub mime_type: MimeType,
@@ -346,13 +368,15 @@ pub(crate) struct BinaryProcessor<P: ZbusProxy<'static> + 'static> {
 }
 
 #[cfg(feature = "builtin")]
-pub(crate) struct BuiltinProcessor {
+pub(crate) struct BuiltinProcessor<T> {
     pub builtin: config::BuiltinProcessor,
     pub mime_type: MimeType,
     pub source_transmission: Option<SourceTransmission>,
+    _phantom_data: PhantomData<T>,
 }
 
-impl<P: ZbusProxy<'static> + 'static> BinaryProcessor<P> {
+#[cfg(feature = "external")]
+impl<P: DBusProxy> BinaryProcessor<P> {
     pub fn use_process(&self) -> Arc<crate::dbus::RemoteProcess<P>> {
         self.process.use_()
     }

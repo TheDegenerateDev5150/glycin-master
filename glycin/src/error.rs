@@ -6,10 +6,10 @@ use futures_channel::oneshot;
 use gio::glib;
 use gio::prelude::CancellableExt;
 use glycin_utils::{DimensionTooLargerError, MemoryAllocationError, RemoteError};
-use libseccomp::error::SeccompError;
 
-use crate::config;
-use crate::dbus::{MAX_TEXTURE_SIZE, RemoteProcess, ZbusProxy};
+#[cfg(feature = "external")]
+use crate::dbus::RemoteProcess;
+use crate::{DBusProxy, MAX_TEXTURE_SIZE, config};
 
 #[derive(Debug, Clone, Default)]
 pub struct ErrorContext {
@@ -81,7 +81,8 @@ impl ErrorCtx {
 }
 
 pub trait ResultExt<T> {
-    fn err_context<S: ZbusProxy<'static>>(
+    #[cfg(feature = "external")]
+    fn err_context<S: DBusProxy>(
         self,
         process: &RemoteProcess<S>,
         cancellable: &gio::Cancellable,
@@ -91,7 +92,8 @@ pub trait ResultExt<T> {
 }
 
 impl<T, E: Into<Error>> ResultExt<T> for Result<T, E> {
-    fn err_context<S: ZbusProxy<'static>>(
+    #[cfg(feature = "external")]
+    fn err_context<S: DBusProxy>(
         self,
         process: &RemoteProcess<S>,
         cancellable: &gio::Cancellable,
@@ -193,8 +195,9 @@ pub enum Error {
     WidgthOrHeightZero(String),
     #[error("Memfd: {0}")]
     MemFd(Arc<memfd::Error>),
+    #[cfg(feature = "external")]
     #[error("Seccomp: {0}")]
-    Seccomp(Arc<SeccompError>),
+    Seccomp(Arc<libseccomp::error::SeccompError>),
     #[error("ICC profile: {0}")]
     IccProfile(#[from] lcms2::Error),
     #[error("Operation was explicitly canceled.\nOriginal error: {0:?}")]
@@ -266,8 +269,9 @@ impl From<memfd::Error> for Error {
     }
 }
 
-impl From<SeccompError> for Error {
-    fn from(err: SeccompError) -> Self {
+#[cfg(feature = "external")]
+impl From<libseccomp::error::SeccompError> for Error {
+    fn from(err: libseccomp::error::SeccompError) -> Self {
         Self::Seccomp(Arc::new(err))
     }
 }

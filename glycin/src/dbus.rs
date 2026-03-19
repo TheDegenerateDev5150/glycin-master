@@ -24,13 +24,10 @@ use zbus::zvariant::{self, OwnedObjectPath};
 
 use crate::sandbox::Sandbox;
 use crate::util::{self, Task, spawn};
-use crate::{EditableImage, Error, Image, MimeType, SandboxMechanism, config};
-
-/// Max texture size 8 GB in bytes
-pub(crate) const MAX_TEXTURE_SIZE: u64 = 8 * 10u64.pow(9);
+use crate::{DBusProxy, EditableImage, Error, Image, MimeType, SandboxMechanism, config};
 
 #[derive(Debug)]
-pub struct RemoteProcess<P: ZbusProxy<'static> + 'static> {
+pub struct RemoteProcess<P: DBusProxy> {
     dbus_connection: zbus::Connection,
     _dbus_connection_task: Task<()>,
     proxy: P,
@@ -41,7 +38,7 @@ pub struct RemoteProcess<P: ZbusProxy<'static> + 'static> {
     base_dir: Option<PathBuf>,
 }
 
-impl<P: ZbusProxy<'static> + 'static> Drop for RemoteProcess<P> {
+impl<P: DBusProxy> Drop for RemoteProcess<P> {
     fn drop(&mut self) {
         tracing::debug!("Winding down process");
         self.cancellable.cancel();
@@ -70,7 +67,7 @@ impl<'a> ZbusProxy<'a> for EditorProxy<'a> {
     }
 }
 
-impl<P: ZbusProxy<'static>> RemoteProcess<P> {
+impl<P: DBusProxy> RemoteProcess<P> {
     pub async fn new(
         config_entry: config::ConfigEntry,
         sandbox_mechanism: SandboxMechanism,

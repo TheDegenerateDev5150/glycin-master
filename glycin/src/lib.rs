@@ -67,12 +67,19 @@ mod api_loader;
 pub mod config;
 #[cfg(not(feature = "unstable-config"))]
 mod config;
+#[cfg(feature = "external")]
 mod dbus;
+#[cfg(not(feature = "external"))]
+mod dbus_shim;
 mod error;
 mod fontconfig;
 mod icc;
 mod orientation;
+#[cfg(feature = "external")]
 mod pool;
+#[cfg(not(feature = "external"))]
+mod pool_shim;
+#[cfg(feature = "external")]
 mod sandbox;
 mod source;
 mod util;
@@ -80,14 +87,21 @@ mod util;
 #[cfg(feature = "gobject")]
 pub mod gobject;
 
+/// Max texture size 8 GB in bytes
+pub(crate) const MAX_TEXTURE_SIZE: u64 = 8 * 10u64.pow(9);
+
 pub use api_common::*;
 pub use api_creator::*;
 pub use api_editor::*;
 pub use api_loader::*;
 pub use config::COMPAT_VERSION;
+#[cfg(not(feature = "external"))]
+use dbus_shim as dbus;
 pub use error::{Error, ErrorContext, ErrorCtx};
 pub use glycin_common::{MemoryFormat, MemoryFormatSelection, Operation, OperationId, Operations};
 pub use gufo_common::cicp::Cicp;
 pub use pool::{Pool, PoolConfig};
+#[cfg(not(feature = "external"))]
+use pool_shim as pool;
 #[cfg(feature = "gdk4")]
 pub use util::gdk_memory_format;

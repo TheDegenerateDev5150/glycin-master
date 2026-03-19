@@ -10,13 +10,14 @@ use std::usize;
 use gio::glib;
 use gio::prelude::*;
 
+#[cfg(feature = "external")]
+use crate::DBusProxy;
 use crate::config::{ConfigEntry, ConfigEntryHash};
-use crate::dbus::ZbusProxy;
 use crate::util::{AsyncMutex, TimerHandle, spawn_timeout};
 use crate::{Error, SandboxMechanism, config, dbus};
 
 #[derive(Debug)]
-pub struct PooledProcess<P: ZbusProxy<'static> + 'static> {
+pub struct PooledProcess<P: DBusProxy> {
     last_use: Mutex<Instant>,
     _timeout: Arc<Mutex<Option<TimerHandle>>>,
     process: Arc<dbus::RemoteProcess<P>>,
@@ -49,7 +50,7 @@ impl Drop for UsageTracker {
     }
 }
 
-impl<P: ZbusProxy<'static> + 'static> PooledProcess<P> {
+impl<P: DBusProxy> PooledProcess<P> {
     pub fn use_(&self) -> Arc<dbus::RemoteProcess<P>> {
         tracing::trace!("Using pooled process");
         *self.last_use.lock().unwrap() = Instant::now();
@@ -174,7 +175,7 @@ impl Pool {
     }
 
     /// Spawns process if not available yet
-    pub(crate) async fn get_process<P: ZbusProxy<'static> + 'static>(
+    pub(crate) async fn get_process<P: DBusProxy>(
         self: Arc<Self>,
         pooled_processes: &AsyncMutex<BTreeMap<ConfigEntryHash, Vec<Arc<PooledProcess<P>>>>>,
         config: config::ConfigEntry,

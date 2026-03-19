@@ -36,6 +36,8 @@ unstable-config = []
 builtin-image-rs = ["dep:glycin-image-rs", "builtin"]
 builtin = ["glycin-utils/builtin", "futures-util/sink", "futures-channel/sink"]
 
+external = ["dep:libseccomp", "dep:gio-unix", "dep:zbus"]
+
 [dependencies]
 async-fs = { workspace = true, optional = true }
 async-global-executor = { workspace = true, optional = true }
@@ -58,7 +60,7 @@ glycin-image-rs = { workspace = true, optional = true }
 lcms2-sys.workspace = true
 lcms2.workspace = true
 libc.workspace = true
-libseccomp.workspace = true
+libseccomp = { workspace = true, optional = true }
 memfd.workspace = true
 memmap.workspace = true
 nix = { workspace = true, features = ["fs", "resource", "signal"] }
@@ -69,8 +71,8 @@ tokio-stream = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 tracing.workspace = true
 yeslogic-fontconfig-sys.workspace = true
-zbus = { workspace = true, features = ["p2p"] }
-gio-unix.workspace = true
+zbus = { workspace = true, features = ["p2p"], optional = true }
+gio-unix = { workspace = true, optional = true }
 
 [package.metadata.docs.rs]
 features = ["gdk4"]

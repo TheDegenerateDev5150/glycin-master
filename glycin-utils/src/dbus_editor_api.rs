@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use zbus::zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type, as_value};
 
 use crate::dbus_types::{self, *};
-use crate::{ByteData, FungibleMemory, SharedMemory};
-use crate::{MemoryAllocationError, error::*};
+use crate::error::*;
+use crate::{ByteData, FungibleMemory, MemoryAllocationError, SharedMemory};
 
 #[derive(DeserializeDict, SerializeDict, Type, Debug)]
 #[zvariant(signature = "dict")]

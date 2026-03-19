@@ -153,6 +153,7 @@ impl Creator {
             .err_no_context_legacy(&self.cancellable)?;
 
         match editor {
+            #[cfg(feature = "external")]
             Processor::Binary(editor) => {
                 let process = editor.process.use_();
 

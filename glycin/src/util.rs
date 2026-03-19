@@ -10,6 +10,7 @@ use glycin_utils::MemoryFormat;
 #[cfg(feature = "gdk4")]
 use crate::ColorState;
 use crate::ErrorCtx;
+#[cfg(feature = "external")]
 use crate::sandbox::Sandbox;
 
 pub trait ShortcutErrorFuture<T, E>: Future<Output = Result<T, crate::Error>> + Sized
@@ -119,6 +120,7 @@ pub enum RunEnvironment {
 }
 
 impl RunEnvironment {
+    #[cfg(feature = "external")]
     pub async fn cached() -> Self {
         static RUN_ENVIRONMENT: AsyncMutex<Option<RunEnvironment>> = new_async_mutex(None);
 
@@ -142,6 +144,11 @@ impl RunEnvironment {
             *run_environment = Some(run_env);
             run_env
         }
+    }
+
+    #[cfg(not(feature = "external"))]
+    pub async fn cached() -> Self {
+        Self::Host
     }
 }
 

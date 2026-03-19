@@ -8,10 +8,13 @@ edition.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["async-io"]
+default = ["async-io", "external-loaders"]
 async-io = ["glycin/async-io", "glycin-utils/async-io"]
 tokio = ["glycin/tokio", "glycin-utils/tokio"]
+
 builtin-loaders = ["glycin/builtin-image-rs"]
+external-loaders = ["glycin/external"]
+combined-loaders = ["builtin-loaders", "external-loaders"]
 
 [dev-dependencies]
 async-io.workspace = true
