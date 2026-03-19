@@ -214,6 +214,10 @@ pub enum Error {
     ExpectedBinaryProcessor,
     #[error("Failed to allocate memory: {0}")]
     MemoryAllocationError(String),
+    #[error("GLib thread failed: {0}")]
+    JoinError(String),
+    #[error("Thread panic")]
+    ThreadPanic,
 }
 
 impl Error {
@@ -283,5 +287,11 @@ impl From<DimensionTooLargerError> for Error {
 impl From<MemoryAllocationError> for Error {
     fn from(value: MemoryAllocationError) -> Self {
         Self::MemoryAllocationError(value.to_string())
+    }
+}
+
+impl From<glib::JoinError> for Error {
+    fn from(value: glib::JoinError) -> Self {
+        Self::JoinError(value.to_string())
     }
 }

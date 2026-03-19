@@ -136,7 +136,11 @@ impl Loader {
 
         let f = || async move { self.load_internal(source).await }.make_cancellable(cancellable);
 
-        main_context.spawn_from_within(f).await.unwrap()
+        main_context
+            .spawn_from_within(f)
+            .await
+            .err_no_context()
+            .flatten()
     }
 
     async fn load_internal(self, source: Source) -> Result<Image, ErrorCtx> {
@@ -237,11 +241,12 @@ impl Loader {
                     )
                     .map_err(|e| Error::from(e.into_loader_error()))
                 })
-                .map(|x| x.unwrap());
+                .map(|x| x.map_err(|_| Error::ThreadPanic));
 
                 let (img_decoder, image_details) = remote_image_future
                     .join_abort_on_error(file_read_future)
                     .await
+                    .flatten()
                     .err_no_context()?;
 
                 Ok(Image {

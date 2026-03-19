@@ -271,16 +271,6 @@ impl RemoteProcess<LoaderProxy<'static>> {
 
         let image_info = self.proxy.init(init_request).await?;
 
-        /*
-        // Seal all memfds
-        if let Some(exif) = &image_info.details.metadata_exif {
-            exif.seal().await.unwrap();
-        }
-        if let Some(xmp) = &image_info.details.metadata_xmp {
-            xmp.seal().await.unwrap();
-        }
-         */
-
         Ok(image_info)
     }
 

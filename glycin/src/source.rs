@@ -18,14 +18,13 @@ pub struct SourceTransmission {
 
 impl SourceTransmission {
     pub async fn init(source: Source) -> Result<SourceTransmission, Error> {
-        let input_stream = source.to_stream().await.unwrap();
+        let input_stream = source.to_stream().await?;
         let buf = vec![0; BUF_SIZE];
 
         let (buf, n) = input_stream
             .read_future(buf, glib::Priority::DEFAULT)
             .await
-            .map_err(|(_, err)| Error::ImageSource(err))
-            .unwrap();
+            .map_err(|(_, err)| Error::ImageSource(err))?;
 
         let first_bytes = buf[..n].to_vec();
 

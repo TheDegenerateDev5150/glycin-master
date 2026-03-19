@@ -49,7 +49,11 @@ impl Editor {
 
         let f = || async move { self.edit_internal().await }.make_cancellable(cancellable);
 
-        main_context.spawn_from_within(f).await.unwrap()
+        main_context
+            .spawn_from_within(f)
+            .await
+            .err_no_context()
+            .flatten()
     }
 
     pub async fn edit_internal(mut self) -> Result<EditableImage, ErrorCtx> {
@@ -121,11 +125,12 @@ impl Editor {
                             )
                             .map_err(|err| Error::from(err.into_editor_error()))
                         })
-                        .map(|x| x.unwrap());
+                        .map(|x| x.map_err(|_| Error::ThreadPanic));
 
                         let editor = editor_future
                             .join_abort_on_error(read_data_future)
                             .await
+                            .flatten()
                             .err_no_context()?;
 
                         Ok(EditableImage {
