@@ -84,7 +84,7 @@ fn apply_non_sparse<B: ByteData>(
         .set_max_width(u32::MAX as usize);
     let mut decoder =
         zune_jpeg::JpegDecoder::new_with_options(Cursor::new(&mut buf), decoder_options);
-    let mut pixels = decoder.decode().expected_error()?;
+    let pixels = decoder.decode().expected_error()?;
     let info: zune_jpeg::ImageInfo = decoder.info().expected_error()?;
 
     let (encoder_memory_format, glycin_memory_format) = match colorspace {

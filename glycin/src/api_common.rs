@@ -192,7 +192,6 @@ impl<T: GetConfig + Clone> ProcessorContext<T> {
     pub(crate) async fn new(
         source: Source,
         use_expose_base_dir: bool,
-        cancellable: &gio::Cancellable,
         sandbox_selector: &SandboxSelector,
     ) -> Result<ProcessorContext<T>, Error> {
         let file = source.file();

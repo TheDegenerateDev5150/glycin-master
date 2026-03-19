@@ -15,6 +15,7 @@ bitflags.workspace = true
 blocking.workspace = true
 env_logger.workspace = true
 futures-lite = { workspace = true, optional = true }
+futures-timer.workspace = true
 futures-util.workspace = true
 glib = { workspace = true, optional = true }
 glycin-common.workspace = true
@@ -24,6 +25,7 @@ image = { workspace = true, optional = true }
 libc.workspace = true
 libseccomp.workspace = true
 log.workspace = true
+memfd.workspace = true
 memmap.workspace = true
 nix = { workspace = true, features = ["fs", "signal"] }
 paste.workspace = true
@@ -33,7 +35,6 @@ thiserror.workspace = true
 tokio = { workspace = true, optional = true }
 zbus.workspace = true
 zerocopy.workspace = true
-memfd.workspace = true
 
 [features]
 default = ["async-io"]

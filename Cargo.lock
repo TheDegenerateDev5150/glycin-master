@@ -1164,6 +1164,7 @@ dependencies = [
  "blocking",
  "env_logger",
  "futures-lite",
+ "futures-timer",
  "futures-util",
  "glib",
  "glycin-common",

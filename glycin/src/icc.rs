@@ -1,9 +1,5 @@
-use std::ffi::c_void;
-
 use glycin_common::{MemoryFormat, MemoryFormatInfo};
 use glycin_utils::FungibleMemory;
-use lcms2::Transform;
-use lcms2_sys::_HTRANSFORM;
 
 use crate::{ColorState, Error};
 

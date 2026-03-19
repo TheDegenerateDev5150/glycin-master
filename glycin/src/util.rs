@@ -167,29 +167,8 @@ async fn flatpak_devel() -> Option<bool> {
     Some(flatpak_builder && name.ends_with("Devel"))
 }
 
-#[cfg(not(feature = "tokio"))]
-pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
-    async_io::block_on(future)
-}
-
-#[cfg(feature = "tokio")]
-pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
-    static TOKIO_RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
-    let runtime =
-        TOKIO_RT.get_or_init(|| tokio::runtime::Runtime::new().expect("tokio runtime was created"));
-    runtime.block_on(future)
-}
-
-#[cfg(not(feature = "tokio"))]
 pub async fn spawn_blocking<F: FnOnce() -> T + Send + 'static, T: Send + 'static>(f: F) -> T {
-    blocking::unblock(f).await
-}
-
-#[cfg(feature = "tokio")]
-pub async fn spawn_blocking<F: FnOnce() -> T + Send + 'static, T: Send + 'static>(f: F) -> T {
-    tokio::task::spawn_blocking(f)
-        .await
-        .expect("task was not aborted")
+    gio::spawn_blocking(f).await.unwrap()
 }
 
 #[cfg(not(feature = "tokio"))]

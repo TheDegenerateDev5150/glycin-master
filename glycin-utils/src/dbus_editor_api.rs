@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use zbus::zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type, as_value};
 
 use crate::dbus_types::{self, *};
-use crate::error::*;
 use crate::{ByteData, FungibleMemory, SharedMemory};
+use crate::{MemoryAllocationError, error::*};
 
 #[derive(DeserializeDict, SerializeDict, Type, Debug)]
 #[zvariant(signature = "dict")]
@@ -73,6 +73,22 @@ impl<B: ByteData> SparseEditorOutput<B> {
             data: None,
             info: EditorOutputInfo { lossless: true },
         }
+    }
+
+    pub async fn initial_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        if let Some(data) = &mut self.data {
+            data.initial_seal().await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn final_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        if let Some(data) = &mut self.data {
+            data.final_seal().await?;
+        }
+
+        Ok(())
     }
 }
 
@@ -150,6 +166,14 @@ impl<B: ByteData> CompleteEditorOutput<B> {
             data: self.data.into_fungible(),
             info: self.info,
         }
+    }
+
+    pub async fn initial_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        self.data.initial_seal().await
+    }
+
+    pub async fn final_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        self.data.final_seal().await
     }
 }
 

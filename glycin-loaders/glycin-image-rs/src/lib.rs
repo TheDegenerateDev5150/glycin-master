@@ -34,11 +34,6 @@ impl Builtin for BuiltinImageRs {
     }
 }
 
-#[cfg(feature = "builtin")]
-type MemoryX = LocalMemory;
-#[cfg(not(feature = "builtin"))]
-type MemoryX = SharedMemory;
-
 #[derive(Default)]
 pub struct ImgDecoder {
     pub format: Mutex<Option<ImageRsFormat<Reader>>>,

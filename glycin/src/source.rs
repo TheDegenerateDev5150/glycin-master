@@ -1,7 +1,6 @@
-use std::io::Read;
 use std::os::unix::net::UnixStream;
 
-use futures_channel::mpsc::TryRecvError;
+#[cfg(feature = "builtin")]
 use futures_util::SinkExt;
 use gio::prelude::*;
 
@@ -22,7 +21,6 @@ impl SourceTransmission {
         let input_stream = source.to_stream().await.unwrap();
         let buf = vec![0; BUF_SIZE];
 
-        // TODO: Use cancallable here
         let (buf, n) = input_stream
             .read_future(buf, glib::Priority::DEFAULT)
             .await
@@ -37,23 +35,6 @@ impl SourceTransmission {
             first_bytes,
         })
     }
-
-    /*
-    pub fn builtin_reader(self) -> Result<gio::InputStreamRead<gio::InputStream>, Error> {
-        if let Some(seekable) = self
-            .input_stream_read
-            .input_stream()
-            .upcast_ref::<glib::Object>()
-            .downcast_ref::<gio::Seekable>()
-        {
-            seekable.seek(0, glib::SeekType::Set, Some(&self.cancellable))?;
-        } else {
-            todo!()
-        }
-
-        Ok(self.input_stream_read)
-    }
-     */
 
     async fn spawn_with_stream(self, mut stream: util::UnixStream) -> Result<(), Error> {
         stream.write_all(&self.first_bytes).await?;
@@ -142,7 +123,7 @@ impl BuiltinSourceReader {
 }
 
 #[cfg(feature = "builtin")]
-impl Read for BuiltinSourceReader {
+impl std::io::Read for BuiltinSourceReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         loop {
             if !self.cache.is_empty() {
@@ -151,8 +132,8 @@ impl Read for BuiltinSourceReader {
                 return Ok(len);
             } else {
                 match self.stream.try_recv() {
-                    Err(TryRecvError::Closed) => return Ok(0),
-                    Err(TryRecvError::Empty) => continue,
+                    Err(futures_channel::mpsc::TryRecvError::Closed) => return Ok(0),
+                    Err(futures_channel::mpsc::TryRecvError::Empty) => continue,
                     Ok(data) => {
                         let (len, cache) = write_data(buf, &data);
                         self.cache = cache;

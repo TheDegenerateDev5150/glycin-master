@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use glib::object::IsA;
 use glib::prelude::*;
@@ -156,12 +156,14 @@ impl Creator {
             Processor::Binary(editor) => {
                 let process = editor.process.use_();
 
-                Ok(EncodedImage::new(
+                EncodedImage::new(
                     process
                         .create(&editor.mime_type, new_image, self.encoding_options)
                         .await
                         .err_context(&process, &self.cancellable)?,
-                ))
+                )
+                .await
+                .err_no_context()
             }
             #[cfg(feature = "builtin")]
             Processor::Builtin(builtin) => match builtin.builtin {
@@ -174,10 +176,10 @@ impl Creator {
                         new_image,
                         self.encoding_options,
                     )
-                    .map_err(|e| e.into_editor_error().into())
+                    .map_err(|e| e.into_editor_error())
                     .err_no_context_legacy(&self.cancellable)?;
 
-                    Ok(EncodedImage::new(encoded_image))
+                    EncodedImage::new(encoded_image).await.err_no_context()
                 }
             },
         }
@@ -320,8 +322,10 @@ pub struct EncodedImage {
 }
 
 impl EncodedImage {
-    pub fn new(inner: glycin_utils::EncodedImage<SharedMemory>) -> Self {
-        Self { inner }
+    pub async fn new(mut inner: glycin_utils::EncodedImage<SharedMemory>) -> Result<Self, Error> {
+        inner.final_seal().await?;
+
+        Ok(Self { inner })
     }
 
     pub fn data_ref(&self) -> &[u8] {

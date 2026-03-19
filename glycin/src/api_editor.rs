@@ -1,13 +1,16 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+#[cfg(feature = "builtin")]
 use futures_util::FutureExt;
 use gio::glib;
 use gio::prelude::{IsA, *};
+#[cfg(feature = "builtin")]
+use glycin_utils::EditorImplementation;
 use glycin_utils::safe_math::SafeConversion;
 use glycin_utils::{
-    ByteChanges, ByteData, CompleteEditorOutput, EditorImplementation, FungibleMemory,
-    InitializationDetails, Operations, SharedMemory, SparseEditorOutput,
+    ByteChanges, ByteData, CompleteEditorOutput, FungibleMemory, Operations, SharedMemory,
+    SparseEditorOutput,
 };
 use zbus::zvariant::OwnedObjectPath;
 
@@ -52,10 +55,9 @@ impl Editor {
     pub async fn edit_internal(mut self) -> Result<EditableImage, ErrorCtx> {
         let source: Source = self.source.send();
 
-        let editor_context =
-            ProcessorContext::new(source, false, &self.cancellable, &self.sandbox_selector)
-                .await
-                .err_no_context_legacy(&self.cancellable)?;
+        let editor_context = ProcessorContext::new(source, false, &self.sandbox_selector)
+            .await
+            .err_no_context_legacy(&self.cancellable)?;
 
         let editor = editor_context
             .editor(self.pool.clone(), &self.cancellable)
@@ -92,7 +94,7 @@ impl Editor {
 
                 Ok(EditableImage {
                     editor: self,
-                    image_editor: ImageEditor::Remote(ImageEditorRemote {
+                    image_editor: ImageEditor::External(ImageEditorExternal {
                         _active_sandbox_mechanism: editor.sandbox_mechanism,
                         process: editor.process,
                         editor_alive: Default::default(),
@@ -115,7 +117,7 @@ impl Editor {
                             glycin_image_rs::ImgEditor::edit(
                                 builtin_reader,
                                 builtin.mime_type.to_string(),
-                                InitializationDetails::default(),
+                                glycin_utils::InitializationDetails::default(),
                             )
                             .map_err(|err| Error::from(err.into_editor_error()))
                         })
@@ -128,7 +130,7 @@ impl Editor {
 
                         Ok(EditableImage {
                             editor: self,
-                            image_editor: ImageEditor::Local(ImageEditorLocal::ImageRs(editor)),
+                            image_editor: ImageEditor::Builtin(ImageEditorBuiltin::ImageRs(editor)),
                             _mime_type: mime_type,
                         })
                     }
@@ -162,7 +164,7 @@ pub struct EditableImage {
 impl Drop for EditableImage {
     fn drop(&mut self) {
         #[allow(irrefutable_let_patterns)]
-        if let ImageEditor::Remote(editor) = &self.image_editor {
+        if let ImageEditor::External(editor) = &self.image_editor {
             editor.process.use_().done_background(self);
             *editor.editor_alive.lock().unwrap() = Arc::new(());
             spawn_detached(self.editor.pool.clone().clean_loaders());
@@ -178,23 +180,25 @@ impl EditableImage {
     /// a [`SparseEdit::Sparse`] is returned.
     pub async fn apply_sparse(self, operations: &Operations) -> Result<SparseEdit, ErrorCtx> {
         match &self.image_editor {
-            ImageEditor::Remote(editor) => {
+            ImageEditor::External(editor) => {
                 let process = editor.process.use_();
 
-                let editor_output = process
+                let mut editor_output = process
                     .editor_apply_sparse(operations, &self)
                     .await
                     .err_context(&process, &self.editor.cancellable)?;
 
+                editor_output.final_seal().await.err_no_context()?;
+
                 SparseEdit::try_from(editor_output).err_no_context_legacy(&self.editor.cancellable)
             }
             #[cfg(feature = "builtin")]
-            ImageEditor::Local(editor) => match editor {
+            ImageEditor::Builtin(editor) => match editor {
                 #[cfg(feature = "builtin-image-rs")]
-                ImageEditorLocal::ImageRs(editor) => {
+                ImageEditorBuiltin::ImageRs(editor) => {
                     let editor_output = editor
                         .apply_sparse(operations.to_owned())
-                        .map_err(|e| e.into_editor_error().into())
+                        .map_err(|e| e.into_editor_error())
                         .err_no_context_legacy(&self.editor.cancellable)?;
 
                     SparseEdit::try_from(editor_output)
@@ -207,25 +211,27 @@ impl EditableImage {
     /// Apply operations to the image
     pub async fn apply_complete(self, operations: &Operations) -> Result<Edit, ErrorCtx> {
         match &self.image_editor {
-            ImageEditor::Remote(editor) => {
+            ImageEditor::External(editor) => {
                 let process = editor.process.use_();
 
-                let editor_output = process
+                let mut editor_output = process
                     .editor_apply_complete(operations, &self)
                     .await
                     .err_context(&process, &self.editor.cancellable)?
                     .into_fungible();
+
+                editor_output.final_seal().await.err_no_context()?;
 
                 Ok(Edit {
                     inner: editor_output,
                 })
             }
             #[cfg(feature = "builtin")]
-            ImageEditor::Local(editor) => match editor {
-                ImageEditorLocal::ImageRs(editor) => {
+            ImageEditor::Builtin(editor) => match editor {
+                ImageEditorBuiltin::ImageRs(editor) => {
                     let editor_output = editor
                         .apply_complete(operations.to_owned())
-                        .map_err(|e| e.into_editor_error().into())
+                        .map_err(|e| e.into_editor_error())
                         .err_no_context_legacy(&self.editor.cancellable)?;
 
                     Ok(Edit {
@@ -244,7 +250,7 @@ impl EditableImage {
 
     pub(crate) fn edit_request_path(&self) -> OwnedObjectPath {
         #[allow(irrefutable_let_patterns)]
-        if let ImageEditor::Remote(editor) = &self.image_editor {
+        if let ImageEditor::External(editor) = &self.image_editor {
             editor.edit_request.clone()
         } else {
             todo!()
@@ -253,19 +259,20 @@ impl EditableImage {
 }
 
 enum ImageEditor {
-    Remote(ImageEditorRemote),
+    External(ImageEditorExternal),
     #[cfg(feature = "builtin")]
-    Local(ImageEditorLocal),
+    Builtin(ImageEditorBuiltin),
 }
 
-struct ImageEditorRemote {
+struct ImageEditorExternal {
     pub(crate) process: Arc<PooledProcess<EditorProxy<'static>>>,
     edit_request: OwnedObjectPath,
     _active_sandbox_mechanism: SandboxMechanism,
     editor_alive: Mutex<Arc<()>>,
 }
 
-enum ImageEditorLocal {
+#[cfg(feature = "builtin")]
+enum ImageEditorBuiltin {
     #[cfg(feature = "builtin-image-rs")]
     ImageRs(glycin_image_rs::ImgEditor),
 }

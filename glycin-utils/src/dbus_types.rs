@@ -73,6 +73,14 @@ impl<B: ByteData> RemoteImage<B> {
             details,
         }
     }
+
+    pub async fn initial_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        self.details.initial_seal().await
+    }
+
+    pub async fn final_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        self.details.final_seal().await
+    }
 }
 
 #[derive(Deserialize, Serialize, Type, Debug)]
@@ -183,6 +191,30 @@ impl<B: ByteData> ImageDetails<B> {
             transformation_orientation: self.transformation_orientation,
         })
     }
+
+    pub async fn initial_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        if let Some(metadata_exif) = &mut self.metadata_exif {
+            metadata_exif.initial_seal().await?;
+        }
+
+        if let Some(metadata_xmp) = &mut self.metadata_xmp {
+            metadata_xmp.initial_seal().await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn final_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        if let Some(metadata_exif) = &mut self.metadata_exif {
+            metadata_exif.final_seal().await?;
+        }
+
+        if let Some(metadata_xmp) = &mut self.metadata_xmp {
+            metadata_xmp.final_seal().await?;
+        }
+
+        Ok(())
+    }
 }
 
 impl<B: ByteData> Default for FrameDetails<B> {
@@ -267,6 +299,26 @@ impl<B: ByteData> Frame<B> {
             details: self.details.into_other()?,
         })
     }
+
+    pub fn desc(&self) -> String {
+        format!(
+            "{}x{} stride: {}, natural_stride: {}",
+            self.width,
+            self.height,
+            self.stride,
+            self.width * self.memory_format.n_bytes().u32()
+        )
+    }
+
+    pub async fn initial_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        self.texture.initial_seal().await?;
+        self.details.initial_seal().await
+    }
+
+    pub async fn final_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        self.texture.final_seal().await?;
+        self.details.final_seal().await
+    }
 }
 
 #[derive(Deserialize, Serialize, Type, Debug)]
@@ -348,6 +400,22 @@ impl<B: ByteData> FrameDetails<B> {
             n_frame: self.n_frame,
         })
     }
+
+    pub async fn initial_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        if let Some(color_icc_profile) = &mut self.color_icc_profile {
+            color_icc_profile.initial_seal().await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn final_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        if let Some(color_icc_profile) = &mut self.color_icc_profile {
+            color_icc_profile.final_seal().await?;
+        }
+
+        Ok(())
+    }
 }
 
 /// Editable image
@@ -378,6 +446,14 @@ impl<B: ByteData> NewImage<B> {
     pub fn new(image_info: ImageDetails<B>, frames: Vec<Frame<B>>) -> Self {
         Self { image_info, frames }
     }
+
+    pub async fn initial_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        self.image_info.initial_seal().await
+    }
+
+    pub async fn final_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        self.image_info.final_seal().await
+    }
 }
 
 #[derive(DeserializeDict, SerializeDict, Type, Debug, Default)]
@@ -400,5 +476,13 @@ pub struct EncodedImage<B: ByteData> {
 impl<B: ByteData> EncodedImage<B> {
     pub fn new(data: B) -> Self {
         Self { data }
+    }
+
+    pub async fn inital_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        self.data.initial_seal().await
+    }
+
+    pub async fn final_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        self.data.final_seal().await
     }
 }

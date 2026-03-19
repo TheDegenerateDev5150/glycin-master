@@ -90,7 +90,7 @@ pub trait ResultExt<T> {
     fn err_no_context(self) -> Result<T, ErrorCtx>;
 }
 
-impl<T> ResultExt<T> for Result<T, Error> {
+impl<T, E: Into<Error>> ResultExt<T> for Result<T, E> {
     fn err_context<S: ZbusProxy<'static>>(
         self,
         process: &RemoteProcess<S>,
@@ -99,6 +99,8 @@ impl<T> ResultExt<T> for Result<T, Error> {
         match self {
             Ok(x) => Ok(x),
             Err(err) => {
+                let err = err.into();
+
                 let stderr = process.stderr_content.lock().ok().map(|x| x.clone());
                 let stdout = process.stdout_content.lock().ok().map(|x| x.clone());
 
@@ -120,6 +122,8 @@ impl<T> ResultExt<T> for Result<T, Error> {
         match self {
             Ok(x) => Ok(x),
             Err(err) => {
+                let err = err.into();
+
                 if cancellable.is_cancelled() {
                     Err(ErrorCtx::from_error(Error::Canceled(Some(err.to_string()))))
                 } else {
@@ -132,7 +136,7 @@ impl<T> ResultExt<T> for Result<T, Error> {
     fn err_no_context(self) -> Result<T, ErrorCtx> {
         match self {
             Ok(x) => Ok(x),
-            Err(err) => Err(ErrorCtx::from_error(err)),
+            Err(err) => Err(ErrorCtx::from_error(err.into())),
         }
     }
 }

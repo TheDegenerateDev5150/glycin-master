@@ -60,6 +60,7 @@ pub fn worker(format: ImageRsFormat<Reader>, data: Reader, mime_type: String, se
             _ => true,
         };
 
+        // TODO: something seems very wrong with frame details here
         for frame in first_frames.into_iter().chain(frames).enumerate() {
             // Only use FrameDetails for still images because they might not make too much
             // sense otherwise

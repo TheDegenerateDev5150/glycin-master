@@ -1,15 +1,15 @@
 use std::sync::{Arc, Mutex};
 
+#[cfg(feature = "builtin")]
 use futures_util::FutureExt;
 use gio::glib;
 use gio::prelude::*;
 pub use glycin_common::MemoryFormat;
 use glycin_common::{MemoryFormatInfo, MemoryFormatSelection};
+#[cfg(feature = "builtin")]
+use glycin_utils::LoaderImplementation;
 use glycin_utils::safe_math::*;
-use glycin_utils::{
-    ByteData, FungibleMemory, InitializationDetails, LoaderImplementation, RemoteFrame,
-    SharedMemory,
-};
+use glycin_utils::{ByteData, FungibleMemory};
 use gufo_common::cicp::Cicp;
 use gufo_common::orientation::{Orientation, Rotation};
 use util::{CancellableFuture, ShortcutErrorFuture};
@@ -140,14 +140,10 @@ impl Loader {
     }
 
     async fn load_internal(self, source: Source) -> Result<Image, ErrorCtx> {
-        let loader_context = ProcessorContext::new(
-            source,
-            self.use_expose_base_dir,
-            &self.cancellable,
-            &self.sandbox_selector,
-        )
-        .await
-        .err_no_context_legacy(&self.cancellable)?;
+        let loader_context =
+            ProcessorContext::new(source, self.use_expose_base_dir, &self.sandbox_selector)
+                .await
+                .err_no_context_legacy(&self.cancellable)?;
 
         let loader = loader_context
             .loader(self.pool.clone(), &self.cancellable)
@@ -177,10 +173,12 @@ impl Loader {
         let remote_image_future = process.init(&binary_loader.mime_type, remote_reader);
 
         // Drive reading the image source in parallel and shortcut if it errors
-        let remote_image = remote_image_future
+        let mut remote_image = remote_image_future
             .join_abort_on_error(file_read_future)
             .await
             .err_context(&process, &self.cancellable)?;
+
+        remote_image.final_seal().await.err_no_context()?;
 
         let mut details = remote_image.details.into_fungible();
 
@@ -234,7 +232,8 @@ impl Loader {
                     glycin_image_rs::ImgDecoder::init(
                         source_reader,
                         builtin.mime_type.to_string(),
-                        InitializationDetails::default(),
+                        // TODO: That should be something different?
+                        glycin_utils::InitializationDetails::default(),
                     )
                     .map_err(|e| Error::from(e.into_loader_error()))
                 })
@@ -354,11 +353,13 @@ impl Image {
             #[cfg(feature = "builtin")]
             ImageLoader::Builtin(builtin) => match builtin {
                 ImageBuiltinLoader::ImageRs(image_rs) => {
+                    use glycin_utils::LocalMemory;
+
                     let frame = image_rs
                         .lock()
                         .unwrap()
-                        .frame(glycin_utils::FrameRequest::default())
-                        .map_err(|e| e.into_loader_error().into())
+                        .frame::<LocalMemory>(glycin_utils::FrameRequest::default())
+                        .map_err(|e| e.into_loader_error())
                         .err_no_context_legacy(&self.loader.cancellable)?;
                     Frame::from_loader(frame, self)
                         .await
@@ -390,11 +391,13 @@ impl Image {
             ImageLoader::Builtin(builtin) => match builtin {
                 #[cfg(feature = "builtin-image-rs")]
                 ImageBuiltinLoader::ImageRs(image_rs) => {
+                    use glycin_utils::LocalMemory;
+
                     let frame = image_rs
                         .lock()
                         .unwrap()
-                        .frame(frame_request.request)
-                        .map_err(|e| e.into_loader_error().into())
+                        .frame::<LocalMemory>(frame_request.request)
+                        .map_err(|e| e.into_loader_error())
                         .err_no_context_legacy(&self.loader.cancellable)?;
                     Frame::from_loader(frame, self)
                         .await
@@ -568,7 +571,7 @@ pub struct Frame {
     pub(crate) stride: u32,
     pub(crate) memory_format: MemoryFormat,
     pub(crate) delay: Option<std::time::Duration>,
-    pub(crate) details: Arc<glycin_utils::FrameDetails<SharedMemory>>,
+    pub(crate) details: Arc<glycin_utils::FrameDetails<FungibleMemory>>,
     pub(crate) color_state: ColorState,
 }
 
@@ -633,22 +636,13 @@ impl Frame {
             .build()
     }
 
-    pub(crate) async fn from_loader(
-        mut frame: glycin_utils::RemoteFrame,
+    pub(crate) async fn from_loader<B: ByteData>(
+        mut frame: glycin_utils::Frame<B>,
         image: &Image,
     ) -> Result<Self, Error> {
-        // Seal all constant data
-        /*
-        if let Some(icc_profile) = &frame.details.color_icc_profile {
-            seal_fd(icc_profile).await?;
-        }
-         */
-
-        //let raw_fd = frame.texture.as_raw_fd();
+        frame.initial_seal().await?;
 
         validate_frame(&frame)?;
-
-        //let img_buf = ImgBuf::from_shared_memory(frame.texture);
 
         let frame = if image.loader.apply_transformations {
             orientation::apply_exif_orientation(frame.into_fungible(), image)
@@ -686,7 +680,7 @@ impl Frame {
             frame
         };
 
-        let frame = if let Some(target_format) = image
+        let mut frame = if let Some(target_format) = image
             .loader
             .memory_format_selection
             .best_format_for(frame.memory_format)
@@ -698,6 +692,8 @@ impl Frame {
         } else {
             frame.into_fungible()
         };
+
+        frame.final_seal().await?;
 
         Ok(Self {
             buffer: frame.texture.into_gbytes()?,
@@ -725,22 +721,22 @@ impl Default for FrameRequest {
     }
 }
 
-fn validate_frame(frame: &RemoteFrame) -> Result<(), Error> {
+fn validate_frame<B: ByteData>(frame: &glycin_utils::Frame<B>) -> Result<(), Error> {
     let img_buf = &frame.texture;
 
     if img_buf.len() < frame.n_bytes()? {
         return Err(Error::TextureWrongSize {
             texture_size: img_buf.len(),
-            frame: format!("{:?}", frame),
+            frame: format!("{:?}", frame.desc()),
         });
     }
 
     if frame.stride < frame.width.smul(frame.memory_format.n_bytes().u32())? {
-        return Err(Error::StrideTooSmall(format!("{:?}", frame)));
+        return Err(Error::StrideTooSmall(format!("{:?}", frame.desc())));
     }
 
     if frame.width < 1 || frame.height < 1 {
-        return Err(Error::WidgthOrHeightZero(format!("{:?}", frame)));
+        return Err(Error::WidgthOrHeightZero(format!("{:?}", frame.desc())));
     }
 
     if (frame.stride as u64).smul(frame.height as u64)? > MAX_TEXTURE_SIZE {
@@ -811,11 +807,11 @@ impl FrameRequest {
 
 #[derive(Debug, Clone)]
 pub struct FrameDetails {
-    inner: Arc<glycin_utils::FrameDetails<SharedMemory>>,
+    inner: Arc<glycin_utils::FrameDetails<FungibleMemory>>,
 }
 
 impl FrameDetails {
-    fn new(inner: Arc<glycin_utils::FrameDetails<SharedMemory>>) -> Self {
+    fn new(inner: Arc<glycin_utils::FrameDetails<FungibleMemory>>) -> Self {
         Self { inner }
     }
 

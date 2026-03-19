@@ -1,6 +1,7 @@
 use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsRawFd, OwnedFd};
 
+use log::warn;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use zbus::zvariant;
@@ -8,7 +9,34 @@ use zbus::zvariant;
 #[derive(Debug)]
 pub struct SharedMemory {
     memfd: OwnedFd,
-    pub mmap: memmap::MmapMut,
+    mmap: Option<MMapOptions>,
+}
+
+#[derive(Debug)]
+enum MMapOptions {
+    Mutable(memmap::MmapMut),
+    ReadOnly(memmap::Mmap),
+}
+
+impl Deref for MMapOptions {
+    type Target = [u8];
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Mutable(x) => x.deref(),
+            Self::ReadOnly(x) => x.deref(),
+        }
+    }
+}
+
+impl DerefMut for MMapOptions {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Mutable(x) => x.deref_mut(),
+            Self::ReadOnly(_) => {
+                panic!("Shared memory has been sealed and can't be written to anymore.")
+            }
+        }
+    }
 }
 
 impl zvariant::Type for SharedMemory {
@@ -30,11 +58,10 @@ impl<'de> Deserialize<'de> for SharedMemory {
         D: Deserializer<'de>,
     {
         let memfd = zvariant::OwnedFd::deserialize(deserializer)?.into();
-        let mmap = unsafe { memmap::MmapMut::map_mut(&memfd) }.map_err(serde::de::Error::custom)?;
 
         Ok(Self {
             memfd: memfd,
-            mmap: mmap,
+            mmap: None,
         })
     }
 }
@@ -65,15 +92,24 @@ pub trait ByteData:
     fn from_shared(shared: SharedMemory) -> Self;
     fn try_from_vec(vec: Vec<u8>) -> Result<Self, MemoryAllocationError>;
     fn try_from_slice(slice: &[u8]) -> Result<Self, MemoryAllocationError>;
+    fn initial_seal(
+        &mut self,
+    ) -> impl std::future::Future<Output = Result<(), MemoryAllocationError>> + Send;
+    fn final_seal(
+        &mut self,
+    ) -> impl std::future::Future<Output = Result<(), MemoryAllocationError>> + Send;
     #[cfg(feature = "glib")]
     fn into_gbytes(self) -> Result<glib::Bytes, MemoryAllocationError>;
 }
 
 impl ByteData for SharedMemory {
     fn new(size: u64) -> std::io::Result<Self> {
-        let (memfd, mmap) = Self::new_mmap(size)?;
+        let (memfd, mmap) = Self::new_memfd(size)?;
 
-        Ok(Self { memfd, mmap })
+        Ok(Self {
+            memfd,
+            mmap: Some(MMapOptions::Mutable(mmap)),
+        })
     }
 
     fn into_fungible(self) -> FungibleMemory {
@@ -93,15 +129,54 @@ impl ByteData for SharedMemory {
     }
 
     fn try_from_slice(value: &[u8]) -> Result<Self, MemoryAllocationError> {
-        let (memfd, mut mmap) = Self::new_mmap(u64::try_from(value.len()).unwrap()).unwrap();
+        let (memfd, mut mmap) = Self::new_memfd(u64::try_from(value.len()).unwrap()).unwrap();
 
         mmap.copy_from_slice(value.as_ref());
 
-        Ok(Self { memfd, mmap })
+        Ok(Self {
+            memfd,
+            mmap: Some(MMapOptions::Mutable(mmap)),
+        })
+    }
+
+    async fn initial_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        if self.mmap.is_some() {
+            warn!("SharedMemory already got inital seal.");
+            return Ok(());
+        }
+
+        self.seal(&[memfd::FileSeal::SealShrink, memfd::FileSeal::SealGrow])
+            .await
+            .map_err(|err| MemoryAllocationError(err.to_string()))?;
+
+        self.add_mut_memmap()?;
+
+        Ok(())
+    }
+
+    async fn final_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        self.mmap = None;
+
+        self.seal(&[
+            memfd::FileSeal::SealShrink,
+            memfd::FileSeal::SealGrow,
+            memfd::FileSeal::SealWrite,
+            memfd::FileSeal::SealSeal,
+        ])
+        .await
+        .map_err(|err| MemoryAllocationError(err.to_string()))?;
+
+        self.add_memmap()?;
+
+        Ok(())
     }
 
     #[cfg(feature = "glib")]
     fn into_gbytes(self) -> Result<glib::Bytes, MemoryAllocationError> {
+        if !matches!(self.mmap, Some(MMapOptions::ReadOnly(_))) {
+            panic!("SharedMemory is lacking final seal.");
+        }
+
         use std::os::fd::RawFd;
 
         pub unsafe fn gbytes_from_mmap(
@@ -133,7 +208,7 @@ impl ByteData for SharedMemory {
 }
 
 impl SharedMemory {
-    fn new_mmap(size: u64) -> std::io::Result<(OwnedFd, memmap::MmapMut)> {
+    fn new_memfd(size: u64) -> std::io::Result<(OwnedFd, memmap::MmapMut)> {
         let memfd = nix::sys::memfd::memfd_create(
             c"glycin-frame",
             nix::sys::memfd::MFdFlags::MFD_CLOEXEC | nix::sys::memfd::MFdFlags::MFD_ALLOW_SEALING,
@@ -147,37 +222,48 @@ impl SharedMemory {
         Ok((memfd, mmap))
     }
 
-    pub async fn seal(&self) -> Result<(), bool> {
-        /*
+    fn add_mut_memmap(&mut self) -> Result<(), MemoryAllocationError> {
+        let mmap: memmap::MmapMut = unsafe { memmap::MmapMut::map_mut(&self.memfd) }
+            .map_err(|err| MemoryAllocationError(err.to_string()))?;
+
+        self.mmap = Some(MMapOptions::Mutable(mmap));
+
+        Ok(())
+    }
+
+    fn add_memmap(&mut self) -> Result<(), MemoryAllocationError> {
+        let mmap: memmap::Mmap = unsafe { memmap::Mmap::map(&self.memfd) }
+            .map_err(|err| MemoryAllocationError(err.to_string()))?;
+
+        self.mmap = Some(MMapOptions::ReadOnly(mmap));
+
+        Ok(())
+    }
+
+    async fn seal(&self, seals: &[memfd::FileSeal]) -> Result<(), memfd::Error> {
         let raw_fd = self.memfd.as_raw_fd();
 
-        let start = Instant::now();
+        let start = std::time::Instant::now();
 
         let mfd = memfd::Memfd::try_from_fd(raw_fd).unwrap();
-        // In rare circumstances the sealing returns a ResourceBusy
+        // Sealing returns a ResourceBusy for SealWrite until no readable
         loop {
             // 🦭
-            let seal = mfd.add_seals(&[
-                memfd::FileSeal::SealShrink,
-                memfd::FileSeal::SealGrow,
-                memfd::FileSeal::SealWrite,
-                memfd::FileSeal::SealSeal,
-            ]);
+            let seal = mfd.add_seals(seals);
 
             match seal {
                 Ok(_) => break,
-                Err(err) if start.elapsed() > Duration::from_secs(10) => {
+                Err(err) if start.elapsed() > std::time::Duration::from_secs(10) => {
                     // Give up after some time and return the error
                     return Err(err);
                 }
                 Err(_) => {
                     // Try again after short waiting time
-                    util::sleep(Duration::from_millis(1)).await;
+                    futures_timer::Delay::new(std::time::Duration::from_millis(1)).await
                 }
             }
         }
         std::mem::forget(mfd);
-         */
 
         Ok(())
     }
@@ -187,13 +273,17 @@ impl Deref for SharedMemory {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {
-        self.mmap.deref()
+        self.mmap
+            .as_ref()
+            .expect("SharedMemory haven't been sealed before use.")
     }
 }
 
 impl DerefMut for SharedMemory {
     fn deref_mut(&mut self) -> &mut [u8] {
-        self.mmap.deref_mut()
+        self.mmap
+            .as_mut()
+            .expect("SharedMemory haven't been sealed before use.")
     }
 }
 
@@ -229,6 +319,14 @@ impl ByteData for LocalMemory {
 
     fn try_from_slice(value: &[u8]) -> Result<Self, MemoryAllocationError> {
         Ok(Self(value.to_vec()))
+    }
+
+    async fn final_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        Ok(())
+    }
+
+    async fn initial_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        Ok(())
     }
 
     #[cfg(feature = "glib")]
@@ -299,6 +397,22 @@ impl ByteData for FungibleMemory {
 
     fn try_from_slice(value: &[u8]) -> Result<Self, MemoryAllocationError> {
         Ok(Self::LocalMemory(value.to_vec()))
+    }
+
+    async fn initial_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        if let Self::SharedMemory(shared) = self {
+            shared.initial_seal().await?;
+        }
+
+        Ok(())
+    }
+
+    async fn final_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        if let Self::SharedMemory(shared) = self {
+            shared.final_seal().await?;
+        }
+
+        Ok(())
     }
 
     #[cfg(feature = "glib")]
