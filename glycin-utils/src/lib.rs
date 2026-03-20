@@ -7,38 +7,40 @@ mod error_message {
     );
 }
 
+mod api;
 #[cfg(feature = "builtin")]
 mod builtin;
+#[cfg(feature = "external")]
 mod dbus_editor_api;
+#[cfg(feature = "external")]
 mod dbus_loader_api;
-mod dbus_types;
 pub mod editing;
 pub mod error;
 #[cfg(feature = "image-rs")]
 pub mod image_rs;
 //mod img_buf;
-#[cfg(feature = "loader-utils")]
+#[cfg(all(feature = "loader-utils", feature = "external"))]
 pub mod instruction_handler;
+mod memory;
 pub mod safe_math;
-mod shared_memory;
 
 #[cfg(feature = "loader-utils")]
 #[doc(no_inline)]
 pub use std::os::unix::net::UnixStream;
 
+//pub use img_buf::ImgBuf;
+pub use api::*;
 #[cfg(feature = "builtin")]
 pub use builtin::Builtin;
+#[cfg(feature = "external")]
 pub use dbus_editor_api::*;
+#[cfg(feature = "external")]
 pub use dbus_loader_api::*;
-pub use dbus_types::*;
 pub use error::*;
 pub use glycin_common::{
     ExtendedMemoryFormat, MemoryFormat, MemoryFormatInfo, MemoryFormatSelection, Operation,
     Operations,
 };
-//pub use img_buf::ImgBuf;
-#[cfg(feature = "loader-utils")]
+#[cfg(all(feature = "loader-utils", feature = "external"))]
 pub use instruction_handler::*;
-pub use shared_memory::{
-    ByteData, FungibleMemory, LocalMemory, MemoryAllocationError, SharedMemory,
-};
+pub use memory::*;

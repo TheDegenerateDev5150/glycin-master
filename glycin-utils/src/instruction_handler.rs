@@ -7,22 +7,23 @@ use std::sync::Mutex;
 
 use nix::libc::{c_uint, siginfo_t};
 
-use crate::dbus_editor_api::{Editor, EditorImplementation, VoidEditorImplementation};
-use crate::dbus_loader_api::{Loader, LoaderImplementation};
+use crate::api;
+use crate::dbus_editor_api::{Editor, VoidEditorImplementation};
+use crate::dbus_loader_api::Loader;
 
 pub struct DbusServer {
     _dbus_connection: zbus::Connection,
 }
 
 impl DbusServer {
-    pub fn spawn_loader<L: LoaderImplementation>(description: String) {
+    pub fn spawn_loader<L: api::LoaderImplementation>(description: String) {
         futures_lite::future::block_on(async move {
             let _connection = Self::connect::<L, VoidEditorImplementation>(description).await;
             std::future::pending::<()>().await;
         })
     }
 
-    pub fn spawn_loader_editor<L: LoaderImplementation, E: EditorImplementation>(
+    pub fn spawn_loader_editor<L: api::LoaderImplementation, E: api::EditorImplementation>(
         description: String,
     ) {
         futures_lite::future::block_on(async move {
@@ -31,7 +32,7 @@ impl DbusServer {
         })
     }
 
-    async fn connect<L: LoaderImplementation, E: EditorImplementation>(
+    async fn connect<L: api::LoaderImplementation, E: api::EditorImplementation>(
         description: String,
     ) -> Self {
         env_logger::builder().format_timestamp_millis().init();

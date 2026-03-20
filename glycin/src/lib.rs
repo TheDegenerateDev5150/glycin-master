@@ -60,6 +60,7 @@ mod error_message {
 }
 
 mod api_common;
+
 mod api_creator;
 mod api_editor;
 mod api_loader;
@@ -72,6 +73,7 @@ mod dbus;
 #[cfg(not(feature = "external"))]
 mod dbus_shim;
 mod error;
+#[cfg(feature = "external")]
 mod fontconfig;
 mod icc;
 mod orientation;

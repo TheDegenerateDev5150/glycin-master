@@ -4,8 +4,8 @@ use glycin_common::MemoryFormatInfo;
 use gufo_common::math::{Checked, checked};
 
 use super::{EditingFrame, Error};
+use crate::FungibleMemory;
 use crate::editing::orientation::BasicFrame;
-use crate::shared_memory::FungibleMemory;
 
 pub fn clip(
     mut frame: EditingFrame<FungibleMemory>,

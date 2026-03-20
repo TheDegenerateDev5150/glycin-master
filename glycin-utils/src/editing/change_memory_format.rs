@@ -5,8 +5,7 @@ use gufo_common::math::Checked;
 use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
 
-use crate::shared_memory::FungibleMemory;
-use crate::{Frame, MemoryFormat, editing};
+use crate::{Frame, FungibleMemory, MemoryFormat, editing};
 pub fn change_memory_format(
     mut frame: Frame<FungibleMemory>,
     target_format: MemoryFormat,
@@ -152,7 +151,6 @@ pub fn change_memory_format(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{ByteData, RemoteFrame, SharedMemory};
 
     #[test]
     fn u16_to_u8() {

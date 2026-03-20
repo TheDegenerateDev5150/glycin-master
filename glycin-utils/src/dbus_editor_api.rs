@@ -1,7 +1,6 @@
 // Copyright (c) 2024 GNOME Foundation Inc.
 
-use std::any::Any;
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::io::Read;
 use std::marker::PhantomData;
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
@@ -9,12 +8,10 @@ use std::sync::{Arc, Mutex};
 
 use futures_util::FutureExt;
 use glycin_common::Operations;
-use serde::{Deserialize, Serialize};
-use zbus::zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type, as_value};
+use zbus::zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type};
 
-use crate::dbus_types::{self, *};
 use crate::error::*;
-use crate::{ByteData, FungibleMemory, MemoryAllocationError, SharedMemory};
+use crate::{ByteData, SharedMemory, api};
 
 #[derive(DeserializeDict, SerializeDict, Type, Debug)]
 #[zvariant(signature = "dict")]
@@ -42,174 +39,28 @@ impl EditRequest {
     }
 }
 
-/// Result of a sparse editor operation
-///
-/// This either contains `byte_changes` or `data`, depending on whether a sparse
-/// application of the operations was possible.
-#[derive(Deserialize, Serialize, Type, Debug)]
-#[zvariant(signature = "dict")]
-#[non_exhaustive]
-pub struct SparseEditorOutput<B: ByteData> {
-    #[serde(
-        with = "as_value::optional",
-        skip_serializing_if = "Option::is_none",
-        default
-    )]
-    pub byte_changes: Option<ByteChanges>,
-    #[serde(
-        with = "as_value::optional",
-        skip_serializing_if = "Option::is_none",
-        default
-    )]
-    pub data: Option<B>,
-    #[serde(with = "as_value")]
-    pub info: EditorOutputInfo,
-}
-
-impl<B: ByteData> SparseEditorOutput<B> {
-    pub fn byte_changes(byte_changes: ByteChanges) -> Self {
-        SparseEditorOutput {
-            byte_changes: Some(byte_changes),
-            data: None,
-            info: EditorOutputInfo { lossless: true },
-        }
-    }
-
-    pub async fn initial_seal(&mut self) -> Result<(), MemoryAllocationError> {
-        if let Some(data) = &mut self.data {
-            data.initial_seal().await?;
-        }
-
-        Ok(())
-    }
-
-    pub async fn final_seal(&mut self) -> Result<(), MemoryAllocationError> {
-        if let Some(data) = &mut self.data {
-            data.final_seal().await?;
-        }
-
-        Ok(())
-    }
-}
-
-impl<B: ByteData> From<CompleteEditorOutput<B>> for SparseEditorOutput<B> {
-    fn from(value: CompleteEditorOutput<B>) -> Self {
-        Self {
-            byte_changes: None,
-            data: Some(value.data),
-            info: value.info,
-        }
-    }
-}
-
-#[derive(DeserializeDict, SerializeDict, Type, Debug, Clone)]
-#[zvariant(signature = "dict")]
-#[non_exhaustive]
-pub struct ByteChanges {
-    pub changes: Vec<ByteChange>,
-}
-
-#[derive(Deserialize, Serialize, Type, Debug, Clone)]
-pub struct ByteChange {
-    pub offset: u64,
-    pub new_value: u8,
-}
-
-impl ByteChanges {
-    pub fn from_slice(changes: &[(u64, u8)]) -> Self {
-        ByteChanges {
-            changes: changes
-                .iter()
-                .map(|(offset, new_value)| ByteChange {
-                    offset: *offset,
-                    new_value: *new_value,
-                })
-                .collect(),
-        }
-    }
-
-    pub fn apply(&self, data: &mut [u8]) {
-        let mut cur = Cursor::new(data);
-        for change in self.changes.iter() {
-            cur.seek(SeekFrom::Start(change.offset)).unwrap();
-            cur.write_all(&[change.new_value]).unwrap();
-        }
-    }
-}
-
-#[derive(Deserialize, Serialize, Type, Debug)]
-#[zvariant(signature = "dict")]
-#[non_exhaustive]
-pub struct CompleteEditorOutput<B: ByteData> {
-    #[serde(with = "as_value")]
-    pub data: B,
-    #[serde(with = "as_value")]
-    pub info: EditorOutputInfo,
-}
-
-impl<B: ByteData> CompleteEditorOutput<B> {
-    pub fn new(data: B) -> Self {
-        Self {
-            data,
-            info: Default::default(),
-        }
-    }
-
-    pub fn new_lossless(data: Vec<u8>) -> Result<Self, ProcessError> {
-        let data = B::try_from_vec(data).expected_error()?;
-        let info = EditorOutputInfo { lossless: true };
-        Ok(Self { data, info })
-    }
-
-    pub fn into_fungible(self) -> CompleteEditorOutput<FungibleMemory> {
-        CompleteEditorOutput {
-            data: self.data.into_fungible(),
-            info: self.info,
-        }
-    }
-
-    pub async fn initial_seal(&mut self) -> Result<(), MemoryAllocationError> {
-        self.data.initial_seal().await
-    }
-
-    pub async fn final_seal(&mut self) -> Result<(), MemoryAllocationError> {
-        self.data.final_seal().await
-    }
-}
-
-#[derive(DeserializeDict, SerializeDict, Type, Debug, Default, Clone)]
-#[zvariant(signature = "dict")]
-#[non_exhaustive]
-pub struct EditorOutputInfo {
-    /// Operation is considered to be lossless
-    ///
-    /// Operations are considered lossless when all metadata are kept, no image
-    /// data is lost, and no image quality is lost.
-    pub lossless: bool,
-}
-
-pub struct Editor<E: EditorImplementation> {
+pub struct Editor<E: api::EditorImplementation> {
     pub editor: PhantomData<E>,
     pub image_id: Mutex<u64>,
 }
 
 /// D-Bus interface for image editors
 #[zbus::interface(name = "org.gnome.glycin.Editor")]
-impl<E: EditorImplementation> Editor<E> {
+impl<E: api::EditorImplementation> Editor<E> {
     async fn create(
         &self,
         mime_type: String,
-        new_image: NewImage<SharedMemory>,
-        encoding_options: EncodingOptions,
-    ) -> Result<EncodedImage<SharedMemory>, RemoteError> {
+        new_image: api::NewImage<SharedMemory>,
+        encoding_options: api::EncodingOptions,
+    ) -> Result<api::EncodedImage<SharedMemory>, RemoteError> {
         E::create(mime_type, new_image, encoding_options).map_err(|x| x.into_editor_error())
     }
 
     async fn edit(
         &self,
-        init_request: InitRequest,
+        init_request: api::InitRequest,
         #[zbus(connection)] dbus_connection: &zbus::Connection,
-    ) -> Result<dbus_types::RemoteEditableImage, RemoteError> {
+    ) -> Result<api::RemoteEditableImage, RemoteError> {
         let fd = OwnedFd::from(init_request.fd);
         let stream = UnixStream::from(fd);
 
@@ -232,7 +83,7 @@ impl<E: EditorImplementation> Editor<E> {
                 .internal_error()
                 .map_err(|x| x.into_loader_error())?;
 
-        let dbus_image = dbus_types::RemoteEditableImage::new(path.clone());
+        let dbus_image = api::RemoteEditableImage::new(path.clone());
 
         dbus_connection
             .object_server()
@@ -252,18 +103,18 @@ impl<E: EditorImplementation> Editor<E> {
     }
 }
 
-pub struct EditableImage<E: EditorImplementation> {
+pub struct EditableImage<E: api::EditorImplementation> {
     pub editor_implementation: Arc<Box<E>>,
     pub path: OwnedObjectPath,
     dropped: async_lock::OnceCell<()>,
 }
 
 #[zbus::interface(name = "org.gnome.glycin.EditableImage")]
-impl<E: EditorImplementation> EditableImage<E> {
+impl<E: api::EditorImplementation> EditableImage<E> {
     async fn apply_sparse(
         &self,
         edit_request: EditRequest,
-    ) -> Result<SparseEditorOutput<SharedMemory>, RemoteError> {
+    ) -> Result<api::SparseEditorOutput<SharedMemory>, RemoteError> {
         let operations = edit_request.operations()?;
 
         let editor_implementation = self.editor_implementation.clone();
@@ -284,7 +135,7 @@ impl<E: EditorImplementation> EditableImage<E> {
     async fn apply_complete(
         &self,
         edit_request: EditRequest,
-    ) -> Result<CompleteEditorOutput<SharedMemory>, RemoteError> {
+    ) -> Result<api::CompleteEditorOutput<SharedMemory>, RemoteError> {
         let operations = edit_request.operations()?;
 
         let editor_implementation = self.editor_implementation.clone();
@@ -319,63 +170,32 @@ impl<E: EditorImplementation> EditableImage<E> {
     }
 }
 
-/// Implement this trait to create an image editor
-pub trait EditorImplementation: Send + Sync + Sized + 'static {
-    const USEABLE: bool = true;
-
-    fn edit<S: Read + Any>(
-        stream: S,
-        mime_type: String,
-        details: InitializationDetails,
-    ) -> Result<Self, ProcessError>;
-
-    fn create<B: ByteData>(
-        mime_type: String,
-        new_image: NewImage<B>,
-        encoding_options: EncodingOptions,
-    ) -> Result<EncodedImage<B>, ProcessError>;
-
-    fn apply_sparse<B: ByteData>(
-        &self,
-        operations: Operations,
-    ) -> Result<SparseEditorOutput<B>, ProcessError> {
-        let complete = Self::apply_complete(self, operations)?;
-
-        Ok(SparseEditorOutput::from(complete))
-    }
-
-    fn apply_complete<B: ByteData>(
-        &self,
-        operations: Operations,
-    ) -> Result<CompleteEditorOutput<B>, ProcessError>;
-}
-
 /// Give a `None` for a non-existent `EditorImplementation`
 pub enum VoidEditorImplementation {}
 
-impl EditorImplementation for VoidEditorImplementation {
+impl api::EditorImplementation for VoidEditorImplementation {
     const USEABLE: bool = false;
 
     fn edit<S: Read>(
         _stream: S,
         _mime_type: String,
-        _details: InitializationDetails,
+        _details: api::InitializationDetails,
     ) -> Result<Self, ProcessError> {
         unreachable!()
     }
 
     fn create<B: ByteData>(
         _mime_type: String,
-        _new_image: NewImage<B>,
-        _encoding_options: EncodingOptions,
-    ) -> Result<EncodedImage<B>, ProcessError> {
+        _new_image: api::NewImage<B>,
+        _encoding_options: api::EncodingOptions,
+    ) -> Result<api::EncodedImage<B>, ProcessError> {
         unreachable!()
     }
 
     fn apply_complete<B: ByteData>(
         &self,
         _operations: Operations,
-    ) -> Result<CompleteEditorOutput<B>, ProcessError> {
+    ) -> Result<api::CompleteEditorOutput<B>, ProcessError> {
         unreachable!()
     }
 }

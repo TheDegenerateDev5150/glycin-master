@@ -199,16 +199,6 @@ pub fn spawn<T: Send + 'static>(
 }
 
 #[cfg(not(feature = "tokio"))]
-pub fn spawn_blocking_detached<F: FnOnce() -> T + Send + 'static, T: Send + 'static>(f: F) {
-    blocking::unblock(f).detach()
-}
-
-#[cfg(feature = "tokio")]
-pub fn spawn_blocking_detached<F: FnOnce() -> T + Send + 'static, T: Send + 'static>(f: F) {
-    tokio::task::spawn_blocking(f);
-}
-
-#[cfg(not(feature = "tokio"))]
 pub fn spawn_detached<F>(f: F)
 where
     F: Future + Send + 'static,

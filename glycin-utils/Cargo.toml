@@ -23,11 +23,11 @@ gufo-common = { workspace = true, features = ["zvariant"] }
 half.workspace = true
 image = { workspace = true, optional = true }
 libc.workspace = true
-libseccomp.workspace = true
+libseccomp = { workspace = true, optional = true }
 log.workspace = true
-memfd.workspace = true
-memmap.workspace = true
-nix = { workspace = true, features = ["fs", "signal"] }
+memfd = { workspace = true, optional = true }
+memmap = { workspace = true, optional = true }
+nix = { workspace = true, features = ["fs", "signal"], optional = true }
 paste.workspace = true
 rayon.workspace = true
 serde.workspace = true
@@ -45,6 +45,7 @@ loader-utils = ["dep:futures-lite"]
 gobject = ["glib"]
 glib = ["dep:glib"]
 builtin = []
+external = ["dep:libseccomp", "dep:memfd", "dep:memmap", "dep:nix"]
 
 [package.metadata.docs.rs]
 features = ["image-rs", "loader-utils"]

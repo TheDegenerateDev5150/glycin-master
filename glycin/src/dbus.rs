@@ -16,8 +16,8 @@ use gio::prelude::*;
 use glycin_common::Operations;
 use glycin_utils::{
     CompleteEditorOutput, EditRequest, EncodedImage, EncodingOptions, FrameRequest, InitRequest,
-    InitializationDetails, NewImage, RemoteEditableImage, RemoteError, RemoteFrame, RemoteImage,
-    SharedMemory, SparseEditorOutput,
+    InitializationDetails, NewImage, RemoteEditableImage, RemoteError, RemoteImage, SharedMemory,
+    SparseEditorOutput,
 };
 use nix::sys::signal;
 use zbus::zvariant::{self, OwnedObjectPath};
@@ -387,7 +387,10 @@ pub trait Loader {
 
 #[zbus::proxy(name = "org.gnome.glycin.Image")]
 pub trait LoaderState {
-    async fn frame(&self, frame_request: FrameRequest) -> Result<RemoteFrame, RemoteError>;
+    async fn frame(
+        &self,
+        frame_request: FrameRequest,
+    ) -> Result<glycin_utils::Frame<SharedMemory>, RemoteError>;
     async fn done(&self) -> Result<(), RemoteError>;
 }
 

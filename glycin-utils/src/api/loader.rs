@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::time::Duration;
 
 use glycin_common::{MemoryFormat, MemoryFormatInfo};
@@ -9,8 +10,18 @@ use zbus::zvariant::{self, DeserializeDict, Optional, SerializeDict, Type};
 
 use crate::error::DimensionTooLargerError;
 use crate::safe_math::{SafeConversion, SafeMath};
-use crate::shared_memory::{self, FungibleMemory};
-use crate::{ByteData, MemoryAllocationError, SharedMemory};
+use crate::{ByteData, FungibleMemory, MemoryAllocationError, ProcessError};
+
+pub trait LoaderImplementation: Send + Sync + Sized + 'static {
+    fn init<B: ByteData, R: Read + Send + 'static>(
+        stream: R,
+        mime_type: String,
+        details: InitializationDetails,
+    ) -> Result<(Self, ImageDetails<B>), ProcessError>;
+
+    fn frame<T: ByteData>(&mut self, frame_request: FrameRequest)
+    -> Result<Frame<T>, ProcessError>;
+}
 
 #[derive(Deserialize, Serialize, Type, Debug)]
 pub struct InitRequest {
@@ -230,8 +241,6 @@ impl<B: ByteData> Default for FrameDetails<B> {
     }
 }
 
-pub type RemoteFrame = Frame<SharedMemory>;
-
 #[derive(Deserialize, Serialize, Type, Debug)]
 #[serde(bound(deserialize = "B: ByteData"))]
 pub struct Frame<B: ByteData> {
@@ -288,7 +297,7 @@ impl<B: ByteData> Frame<B> {
         }
     }
 
-    pub fn into_other<O: ByteData>(self) -> Result<Frame<O>, shared_memory::MemoryAllocationError> {
+    pub fn into_other<O: ByteData>(self) -> Result<Frame<O>, MemoryAllocationError> {
         Ok(Frame {
             width: self.width,
             height: self.height,
@@ -388,9 +397,7 @@ impl<B: ByteData> FrameDetails<B> {
         }
     }
 
-    pub fn into_other<O: ByteData>(
-        self,
-    ) -> Result<FrameDetails<O>, shared_memory::MemoryAllocationError> {
+    pub fn into_other<O: ByteData>(self) -> Result<FrameDetails<O>, MemoryAllocationError> {
         Ok(FrameDetails {
             color_icc_profile: self.color_icc_profile.map(B::into_other).transpose()?,
             color_cicp: self.color_cicp,
@@ -415,74 +422,5 @@ impl<B: ByteData> FrameDetails<B> {
         }
 
         Ok(())
-    }
-}
-
-/// Editable image
-#[derive(Deserialize, Serialize, Type, Debug, Clone)]
-pub struct RemoteEditableImage {
-    pub edit_request: zvariant::OwnedObjectPath,
-}
-
-impl RemoteEditableImage {
-    pub fn new(frame_request: zvariant::OwnedObjectPath) -> Self {
-        Self {
-            edit_request: frame_request,
-        }
-    }
-}
-
-#[derive(Deserialize, Serialize, Type, Debug)]
-#[zvariant(signature = "dict")]
-#[non_exhaustive]
-pub struct NewImage<B: ByteData> {
-    #[serde(with = "as_value")]
-    pub image_info: ImageDetails<B>,
-    #[serde(with = "as_value")]
-    pub frames: Vec<Frame<B>>,
-}
-
-impl<B: ByteData> NewImage<B> {
-    pub fn new(image_info: ImageDetails<B>, frames: Vec<Frame<B>>) -> Self {
-        Self { image_info, frames }
-    }
-
-    pub async fn initial_seal(&mut self) -> Result<(), MemoryAllocationError> {
-        self.image_info.initial_seal().await
-    }
-
-    pub async fn final_seal(&mut self) -> Result<(), MemoryAllocationError> {
-        self.image_info.final_seal().await
-    }
-}
-
-#[derive(DeserializeDict, SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
-#[non_exhaustive]
-pub struct EncodingOptions {
-    pub quality: Option<u8>,
-    pub compression: Option<u8>,
-}
-
-#[derive(Deserialize, Serialize, Type, Debug)]
-#[zvariant(signature = "dict")]
-#[serde(bound(deserialize = "B: ByteData"))]
-#[non_exhaustive]
-pub struct EncodedImage<B: ByteData> {
-    #[serde(with = "as_value")]
-    pub data: B,
-}
-
-impl<B: ByteData> EncodedImage<B> {
-    pub fn new(data: B) -> Self {
-        Self { data }
-    }
-
-    pub async fn inital_seal(&mut self) -> Result<(), MemoryAllocationError> {
-        self.data.initial_seal().await
-    }
-
-    pub async fn final_seal(&mut self) -> Result<(), MemoryAllocationError> {
-        self.data.final_seal().await
     }
 }

@@ -1,6 +1,5 @@
 // Copyright (c) 2024 GNOME Foundation Inc.
 
-use std::io::Read;
 use std::marker::PhantomData;
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
@@ -9,33 +8,21 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use futures_util::FutureExt;
 use zbus::zvariant::OwnedObjectPath;
 
-use crate::dbus_types::*;
 use crate::error::*;
-use crate::{ByteData, SharedMemory};
+use crate::{SharedMemory, api};
 
-pub trait LoaderImplementation: Send + Sync + Sized + 'static {
-    fn init<B: ByteData, R: Read + Send + 'static>(
-        stream: R,
-        mime_type: String,
-        details: InitializationDetails,
-    ) -> Result<(Self, ImageDetails<B>), ProcessError>;
-
-    fn frame<T: ByteData>(&mut self, frame_request: FrameRequest)
-    -> Result<Frame<T>, ProcessError>;
-}
-
-pub struct Loader<T: LoaderImplementation> {
+pub struct Loader<T: api::LoaderImplementation> {
     pub loader: PhantomData<T>,
     pub image_id: Mutex<u64>,
 }
 
 #[zbus::interface(name = "org.gnome.glycin.Loader")]
-impl<T: LoaderImplementation> Loader<T> {
+impl<T: api::LoaderImplementation> Loader<T> {
     async fn init(
         &self,
-        init_request: InitRequest,
+        init_request: api::InitRequest,
         #[zbus(connection)] dbus_connection: &zbus::Connection,
-    ) -> Result<RemoteImage<SharedMemory>, RemoteError> {
+    ) -> Result<api::RemoteImage<SharedMemory>, RemoteError> {
         let fd = OwnedFd::from(init_request.fd);
         let stream = UnixStream::from(fd);
 
@@ -58,7 +45,7 @@ impl<T: LoaderImplementation> Loader<T> {
             .internal_error()
             .map_err(|x| x.into_loader_error())?;
 
-        let dbus_image = RemoteImage::new(image_info, path.clone());
+        let dbus_image = api::RemoteImage::new(image_info, path.clone());
 
         dbus_connection
             .object_server()
@@ -78,13 +65,13 @@ impl<T: LoaderImplementation> Loader<T> {
     }
 }
 
-pub struct Image<T: LoaderImplementation> {
+pub struct Image<T: api::LoaderImplementation> {
     pub loader_implementation: Arc<Mutex<Box<T>>>,
     pub path: OwnedObjectPath,
     dropped: async_lock::OnceCell<()>,
 }
 
-impl<T: LoaderImplementation> Image<T> {
+impl<T: api::LoaderImplementation> Image<T> {
     pub fn get_loader_state(&self) -> Result<MutexGuard<'_, Box<T>>, RemoteError> {
         self.loader_implementation.lock().map_err(|err| {
             RemoteError::InternalLoaderError(format!(
@@ -95,8 +82,11 @@ impl<T: LoaderImplementation> Image<T> {
 }
 
 #[zbus::interface(name = "org.gnome.glycin.Image")]
-impl<T: LoaderImplementation> Image<T> {
-    async fn frame(&self, frame_request: FrameRequest) -> Result<RemoteFrame, RemoteError> {
+impl<T: api::LoaderImplementation> Image<T> {
+    async fn frame(
+        &self,
+        frame_request: api::FrameRequest,
+    ) -> Result<api::Frame<SharedMemory>, RemoteError> {
         let loader_implementation = self.loader_implementation.clone();
         let mut frame_request = blocking::unblock(move || {
             let mut loader_implementation = loader_implementation.lock().map_err(|err| {

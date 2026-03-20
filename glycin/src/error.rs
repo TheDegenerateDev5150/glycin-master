@@ -152,6 +152,7 @@ pub enum Error {
     GLibError(#[from] glib::Error),
     #[error("Failed to load file/stream: {0}")]
     ImageSource(glib::Error),
+    #[cfg(feature = "external")]
     #[error("Libc error: {0}")]
     NixError(#[from] nix::errno::Errno),
     #[error("IO error: {err} {info}")]
@@ -193,6 +194,7 @@ pub enum Error {
     StrideTooSmall(String),
     #[error("Width or height is zero: {0}")]
     WidgthOrHeightZero(String),
+    #[cfg(feature = "external")]
     #[error("Memfd: {0}")]
     MemFd(Arc<memfd::Error>),
     #[cfg(feature = "external")]
@@ -263,6 +265,7 @@ impl From<Arc<std::io::Error>> for Error {
     }
 }
 
+#[cfg(feature = "external")]
 impl From<memfd::Error> for Error {
     fn from(err: memfd::Error) -> Self {
         Self::MemFd(Arc::new(err))

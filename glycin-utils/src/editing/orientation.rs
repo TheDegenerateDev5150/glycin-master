@@ -2,8 +2,7 @@ use glycin_common::{ExtendedMemoryFormat, MemoryFormatInfo};
 use gufo_common::orientation::{Orientation, Rotation};
 
 use super::EditingFrame;
-use crate::shared_memory::FungibleMemory;
-use crate::{ByteData, Frame};
+use crate::{ByteData, Frame, FungibleMemory};
 
 pub trait BasicFrame<B: ByteData> {
     fn width(&self) -> u32;

@@ -13,6 +13,7 @@ use glycin_utils::*;
 use gufo_common::cicp::Cicp;
 use image::{AnimationDecoder, ImageDecoder, ImageResult, Limits, codecs};
 
+#[cfg(not(feature = "builtin"))]
 init_main_loader_editor!(ImgDecoder, ImgEditor);
 
 type Reader = Cursor<Vec<u8>>;

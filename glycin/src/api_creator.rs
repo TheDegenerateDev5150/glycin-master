@@ -4,7 +4,7 @@ use std::sync::Arc;
 use glib::object::IsA;
 use glib::prelude::*;
 use glycin_common::MemoryFormatInfo;
-use glycin_utils::{ByteData, DimensionTooLargerError, MemoryFormat, SharedMemory};
+use glycin_utils::{ByteData, DimensionTooLargerError, FungibleMemory, MemoryFormat};
 
 #[cfg(feature = "builtin")]
 #[cfg(feature = "builtin-image-rs")]
@@ -22,7 +22,7 @@ pub struct Creator {
     pub(crate) cancellable: gio::Cancellable,
     pub(crate) sandbox_selector: SandboxSelector,
     encoding_options: glycin_utils::EncodingOptions,
-    new_image: glycin_utils::NewImage<SharedMemory>,
+    new_image: glycin_utils::NewImage<FungibleMemory>,
 
     new_frames: Vec<NewFrame>,
 }
@@ -159,8 +159,13 @@ impl Creator {
 
                 EncodedImage::new(
                     process
-                        .create(&editor.mime_type, new_image, self.encoding_options)
+                        .create(
+                            &editor.mime_type,
+                            new_image.into_other().err_no_context()?,
+                            self.encoding_options,
+                        )
                         .await
+                        .map(|x| x.into_fungible())
                         .err_context(&process, &self.cancellable)?,
                 )
                 .await
@@ -264,7 +269,7 @@ pub struct NewFrame {
     memory_format: MemoryFormat,
     texture: Vec<u8>,
     //delay: Option<Duration>,
-    details: glycin_utils::FrameDetails<SharedMemory>,
+    details: glycin_utils::FrameDetails<FungibleMemory>,
     icc_profile: Option<Vec<u8>>,
 }
 
@@ -301,15 +306,19 @@ impl NewFrame {
         Ok(())
     }
 
-    fn frame(self) -> Result<glycin_utils::RemoteFrame, Error> {
-        let texture = SharedMemory::try_from_vec(self.texture)?;
-        let mut frame =
-            glycin_utils::RemoteFrame::new(self.width, self.height, self.memory_format, texture)?;
+    fn frame(self) -> Result<glycin_utils::Frame<FungibleMemory>, Error> {
+        let texture = FungibleMemory::try_from_vec(self.texture)?;
+        let mut frame = glycin_utils::Frame::<FungibleMemory>::new(
+            self.width,
+            self.height,
+            self.memory_format,
+            texture,
+        )?;
 
         frame.details = self.details;
 
         if let Some(icc_profile) = self.icc_profile {
-            let icc_profile = SharedMemory::try_from_vec(icc_profile)?;
+            let icc_profile = FungibleMemory::try_from_vec(icc_profile)?;
             frame.details.color_icc_profile = Some(icc_profile);
         }
 
@@ -319,11 +328,11 @@ impl NewFrame {
 
 #[derive(Debug)]
 pub struct EncodedImage {
-    pub(crate) inner: glycin_utils::EncodedImage<SharedMemory>,
+    pub(crate) inner: glycin_utils::EncodedImage<FungibleMemory>,
 }
 
 impl EncodedImage {
-    pub async fn new(mut inner: glycin_utils::EncodedImage<SharedMemory>) -> Result<Self, Error> {
+    pub async fn new(mut inner: glycin_utils::EncodedImage<FungibleMemory>) -> Result<Self, Error> {
         inner.final_seal().await?;
 
         Ok(Self { inner })

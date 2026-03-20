@@ -9,8 +9,7 @@ use gio::prelude::{IsA, *};
 use glycin_utils::EditorImplementation;
 use glycin_utils::safe_math::SafeConversion;
 use glycin_utils::{
-    ByteChanges, ByteData, CompleteEditorOutput, FungibleMemory, Operations, SharedMemory,
-    SparseEditorOutput,
+    ByteChanges, ByteData, CompleteEditorOutput, FungibleMemory, Operations, SparseEditorOutput,
 };
 use zbus::zvariant::OwnedObjectPath;
 
@@ -200,7 +199,8 @@ impl EditableImage {
 
                 editor_output.final_seal().await.err_no_context()?;
 
-                SparseEdit::try_from(editor_output).err_no_context_legacy(&self.editor.cancellable)
+                SparseEdit::try_from(editor_output.into_fungible())
+                    .err_no_context_legacy(&self.editor.cancellable)
             }
             #[cfg(feature = "builtin")]
             ImageEditor::Builtin(editor) => match editor {
@@ -361,10 +361,12 @@ impl SparseEdit {
     }
 }
 
-impl TryFrom<SparseEditorOutput<SharedMemory>> for SparseEdit {
+impl TryFrom<SparseEditorOutput<FungibleMemory>> for SparseEdit {
     type Error = Error;
 
-    fn try_from(value: SparseEditorOutput<SharedMemory>) -> std::result::Result<Self, Self::Error> {
+    fn try_from(
+        value: SparseEditorOutput<FungibleMemory>,
+    ) -> std::result::Result<Self, Self::Error> {
         if value.byte_changes.is_some() && value.data.is_some() {
             Err(Error::RemoteError(
                 glycin_utils::RemoteError::InternalLoaderError(
