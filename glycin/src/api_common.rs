@@ -202,6 +202,7 @@ impl<T: GetConfig + Clone> ProcessorContext<T> {
         let file = source.file();
 
         let source_transmission = SourceTransmission::init(source).await?;
+
         let mime_type = guess_mime_type(
             source_transmission.file(),
             source_transmission.first_bytes(),
@@ -386,9 +387,28 @@ pub(crate) async fn guess_mime_type(
     file: Option<&gio::File>,
     head: &[u8],
 ) -> Result<MimeType, Error> {
-    let (content_type, unsure) = gio::content_type_guess(None::<String>, head);
-    let mime_type = gio::content_type_get_mime_type(&content_type)
-        .ok_or_else(|| Error::UnknownContentType(content_type.to_string()));
+    fn guess_mime_type_(
+        filename: Option<PathBuf>,
+        data: &[u8],
+    ) -> (Result<glib::GString, Error>, bool) {
+        let (content_type, unsure) = gio::content_type_guess(filename, data);
+
+        let mime_type = gio::content_type_get_mime_type(&content_type)
+            .ok_or_else(|| Error::UnknownContentType(content_type.to_string()));
+
+        (mime_type, unsure)
+    }
+
+    // Try with first 8 bytes first, since lookup is faster
+    let short_head = head.get(..8).unwrap_or(head);
+    let (mime_type, unsure) = guess_mime_type_(None, short_head);
+
+    // PNG could be APNG
+    let (mime_type, unsure) = if mime_type.as_ref().map_or(true, |x| x == "image/png") || unsure {
+        guess_mime_type_(None, head)
+    } else {
+        (mime_type, unsure)
+    };
 
     // Prefer file extension for TIFF since it can be a RAW format as well
     let is_tiff = mime_type.clone().ok() == Some("image/tiff".into());
@@ -412,7 +432,11 @@ pub(crate) async fn guess_mime_type(
             .map(|x| MimeType::new(x.to_string()));
     }
 
-    mime_type.map(|x| MimeType::new(x.to_string()))
+    let result = mime_type.map(|x| MimeType::new(x.to_string()));
+
+    tracing::trace!("Mimetype is: {result:?}");
+
+    result
 }
 
 static CHECK_MAIN_CONTEXT: LazyLock<std::sync::Mutex<()>> = LazyLock::new(Default::default);

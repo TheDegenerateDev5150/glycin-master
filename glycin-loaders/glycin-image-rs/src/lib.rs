@@ -13,9 +13,6 @@ use glycin_utils::*;
 use gufo_common::cicp::Cicp;
 use image::{AnimationDecoder, ImageDecoder, ImageResult, Limits, codecs};
 
-#[cfg(not(feature = "builtin"))]
-init_main_loader_editor!(ImgDecoder, ImgEditor);
-
 type Reader = Cursor<Vec<u8>>;
 type FrameReceiver = Receiver<Result<(Frame<LocalMemory>, bool), ProcessError>>;
 type FrameSender = Sender<Result<(Frame<LocalMemory>, bool), ProcessError>>;
@@ -88,7 +85,6 @@ impl LoaderImplementation for ImgDecoder {
 
         let loader_impelementation = Self::default();
 
-        // TODO: Unnecessary clone of data
         let gufo_image = gufo::Image::new(data);
         let data = Cursor::new(match gufo_image {
             Ok(gufo_image) => {

@@ -1,3 +1,4 @@
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "builtin")]
@@ -125,25 +126,27 @@ impl Loader {
         self
     }
 
-    #[cfg(feature = "external")]
     pub fn pool(&mut self, pool: Arc<Pool>) -> &mut Self {
         self.pool = pool;
         self
     }
 
     /// Load basic image information and enable further operations
-    pub async fn load(mut self) -> Result<Image, ErrorCtx> {
-        let source = self.source.send();
-        let main_context = self.main_context();
-        let cancellable = self.cancellable.clone();
+    pub fn load(mut self) -> Pin<Box<dyn Future<Output = Result<Image, ErrorCtx>>>> {
+        Box::pin(async {
+            let source = self.source.send();
+            let main_context = self.main_context();
+            let cancellable = self.cancellable.clone();
 
-        let f = || async move { self.load_internal(source).await }.make_cancellable(cancellable);
+            let f =
+                || async move { self.load_internal(source).await }.make_cancellable(cancellable);
 
-        main_context
-            .spawn_from_within(f)
-            .await
-            .err_no_context()
-            .flatten()
+            main_context
+                .spawn_from_within(f)
+                .await
+                .err_no_context()
+                .flatten()
+        })
     }
 
     async fn load_internal(self, source: Source) -> Result<Image, ErrorCtx> {
@@ -212,13 +215,15 @@ impl Loader {
 
         let mime_type = binary_loader.mime_type.clone();
 
+        let image_loader = ImageLoader::Binary(ImageExternalLoader {
+            process: binary_loader.process,
+            active_sandbox_mechanism: binary_loader.sandbox_mechanism,
+            usage_tracker: Mutex::new(Some(binary_loader.usage_tracker)),
+            frame_request: remote_image.frame_request,
+        });
+
         Ok(Image {
-            image_loader: ImageLoader::Binary(ImageExternalLoader {
-                process: binary_loader.process,
-                active_sandbox_mechanism: binary_loader.sandbox_mechanism,
-                usage_tracker: Mutex::new(Some(binary_loader.usage_tracker)),
-                frame_request: remote_image.frame_request,
-            }),
+            image_loader,
             details: Arc::new(details),
             loader: self,
             mime_type,
@@ -347,41 +352,47 @@ impl Image {
     /// Loads texture and information of the next frame. For single still
     /// images, this can only be called once. For animated images, this
     /// function will loop to the first frame, when the last frame is reached.
-    pub async fn next_frame(&self) -> Result<Frame, ErrorCtx> {
-        match &self.image_loader {
-            #[cfg(feature = "external")]
-            ImageLoader::Binary(image_loader) => {
-                let process = image_loader.process.use_();
+    pub fn next_frame<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<Frame, ErrorCtx>> + 'a>> {
+        Box::pin(async move {
+            let result = match &self.image_loader {
+                #[cfg(feature = "external")]
+                ImageLoader::Binary(image_loader) => {
+                    let process = image_loader.process.use_();
 
-                let mut frame_request = glycin_utils::FrameRequest::default();
-                frame_request.loop_animation = true;
+                    let mut frame_request = glycin_utils::FrameRequest::default();
+                    frame_request.loop_animation = true;
 
-                let frame = process
-                    .request_frame(frame_request, self)
-                    .await
-                    .err_context(&process, &self.cancellable())?;
+                    let frame = process
+                        .request_frame(frame_request, self)
+                        .await
+                        .err_context(&process, &self.cancellable())?;
 
-                Frame::from_loader(frame, &self)
-                    .await
-                    .err_no_context_legacy(&self.cancellable())
-            }
-            #[cfg(feature = "builtin")]
-            ImageLoader::Builtin(builtin) => match builtin {
-                ImageBuiltinLoader::ImageRs(image_rs) => {
-                    use glycin_utils::LocalMemory;
-
-                    let frame = image_rs
-                        .lock()
-                        .unwrap()
-                        .frame::<LocalMemory>(glycin_utils::FrameRequest::default())
-                        .map_err(|e| e.into_loader_error())
-                        .err_no_context_legacy(&self.loader.cancellable)?;
-                    Frame::from_loader(frame, self)
+                    Frame::from_loader(frame, &self)
                         .await
                         .err_no_context_legacy(&self.cancellable())
                 }
-            },
-        }
+                #[cfg(feature = "builtin")]
+                ImageLoader::Builtin(builtin) => match builtin {
+                    ImageBuiltinLoader::ImageRs(image_rs) => {
+                        use glycin_utils::LocalMemory;
+
+                        let frame = image_rs
+                            .lock()
+                            .unwrap()
+                            .frame::<LocalMemory>(glycin_utils::FrameRequest::default())
+                            .map_err(|e| e.into_loader_error())
+                            .err_no_context_legacy(&self.loader.cancellable)?;
+                        Frame::from_loader(frame, self)
+                            .await
+                            .err_no_context_legacy(&self.cancellable())
+                    }
+                },
+            };
+
+            tracing::trace!("Next frame loaded.");
+
+            result
+        })
     }
 
     /// Loads a specific frame
@@ -534,6 +545,8 @@ pub struct ImageDetails {
     inner: Arc<glycin_utils::ImageDetails<FungibleMemory>>,
 }
 
+static_assertions::assert_impl_all!(ImageDetails: Send, Sync);
+
 impl ImageDetails {
     fn new(inner: Arc<glycin_utils::ImageDetails<FungibleMemory>>) -> Self {
         Self { inner }
@@ -594,6 +607,8 @@ pub struct Frame {
     pub(crate) details: Arc<glycin_utils::FrameDetails<FungibleMemory>>,
     pub(crate) color_state: ColorState,
 }
+
+static_assertions::assert_impl_all!(Frame: Send, Sync);
 
 impl Frame {
     pub fn buf_bytes(&self) -> glib::Bytes {
@@ -704,6 +719,7 @@ impl Frame {
             .loader
             .memory_format_selection
             .best_format_for(frame.memory_format)
+            && frame.memory_format != target_format
         {
             util::spawn_blocking(move || {
                 glycin_utils::editing::change_memory_format(frame.into_fungible(), target_format)

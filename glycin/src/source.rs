@@ -18,8 +18,12 @@ pub struct SourceTransmission {
 
 impl SourceTransmission {
     pub async fn init(source: Source) -> Result<SourceTransmission, Error> {
+        tracing::trace!("Opening source");
+
         let input_stream = source.to_stream().await?;
         let buf = vec![0; BUF_SIZE];
+
+        tracing::trace!("Read first {BUF_SIZE} bytes");
 
         let (buf, n) = input_stream
             .read_future(buf, glib::Priority::DEFAULT)
@@ -72,6 +76,11 @@ impl SourceTransmission {
         mut channel: futures_channel::mpsc::Sender<Vec<u8>>,
     ) -> Result<(), Error> {
         channel.send(self.first_bytes.to_vec()).await.unwrap();
+
+        if self.first_bytes.len() < BUF_SIZE {
+            // TODO: Potentially unsound, but gives 10 micro seconds
+            return Ok(());
+        }
 
         loop {
             let buf = vec![0; BUF_SIZE];
