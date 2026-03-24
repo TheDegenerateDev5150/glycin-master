@@ -263,8 +263,8 @@ impl Loader {
                     .err_no_context()?;
 
                 Ok(Image {
-                    image_loader: ImageLoader::Builtin(ImageBuiltinLoader::ImageRs(Mutex::new(
-                        img_decoder,
+                    image_loader: ImageLoader::Builtin(ImageBuiltinLoader::ImageRs(Arc::new(
+                        Mutex::new(img_decoder),
                     ))),
                     details: Arc::new(image_details),
                     loader: self,
@@ -353,17 +353,25 @@ impl Image {
     /// images, this can only be called once. For animated images, this
     /// function will loop to the first frame, when the last frame is reached.
     pub fn next_frame<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<Frame, ErrorCtx>> + 'a>> {
+        self.specific_frame(FrameRequest::default())
+    }
+
+    /// Loads a specific frame
+    ///
+    /// Loads a specific frame from the file. Loaders can ignore parts of the
+    /// instructions in the `FrameRequest`.
+    pub fn specific_frame<'a>(
+        &'a self,
+        frame_request: FrameRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<Frame, ErrorCtx>> + 'a>> {
         Box::pin(async move {
-            let result = match &self.image_loader {
+            match &self.image_loader {
                 #[cfg(feature = "external")]
                 ImageLoader::Binary(image_loader) => {
                     let process = image_loader.process.use_();
 
-                    let mut frame_request = glycin_utils::FrameRequest::default();
-                    frame_request.loop_animation = true;
-
                     let frame = process
-                        .request_frame(frame_request, self)
+                        .request_frame(frame_request.request, self)
                         .await
                         .err_context(&process, &self.cancellable())?;
 
@@ -373,65 +381,30 @@ impl Image {
                 }
                 #[cfg(feature = "builtin")]
                 ImageLoader::Builtin(builtin) => match builtin {
+                    #[cfg(feature = "builtin-image-rs")]
                     ImageBuiltinLoader::ImageRs(image_rs) => {
                         use glycin_utils::LocalMemory;
 
-                        let frame = image_rs
-                            .lock()
-                            .unwrap()
-                            .frame::<LocalMemory>(glycin_utils::FrameRequest::default())
-                            .map_err(|e| e.into_loader_error())
-                            .err_no_context_legacy(&self.loader.cancellable)?;
+                        let image_rs = image_rs.to_owned();
+
+                        let frame = gio::spawn_blocking(move || {
+                            image_rs
+                                .lock()
+                                .unwrap()
+                                .frame::<LocalMemory>(frame_request.request)
+                                .map_err(|e| e.into_loader_error())
+                        })
+                        .await
+                        .unwrap()
+                        .err_no_context_legacy(&self.loader.cancellable)?;
+
                         Frame::from_loader(frame, self)
                             .await
                             .err_no_context_legacy(&self.cancellable())
                     }
                 },
-            };
-
-            tracing::trace!("Next frame loaded.");
-
-            result
-        })
-    }
-
-    /// Loads a specific frame
-    ///
-    /// Loads a specific frame from the file. Loaders can ignore parts of the
-    /// instructions in the `FrameRequest`.
-    pub async fn specific_frame(&self, frame_request: FrameRequest) -> Result<Frame, ErrorCtx> {
-        match &self.image_loader {
-            #[cfg(feature = "external")]
-            ImageLoader::Binary(image_loader) => {
-                let process = image_loader.process.use_();
-
-                let frame = process
-                    .request_frame(frame_request.request, self)
-                    .await
-                    .err_context(&process, &self.cancellable())?;
-
-                Frame::from_loader(frame, &self)
-                    .await
-                    .err_no_context_legacy(&self.cancellable())
             }
-            #[cfg(feature = "builtin")]
-            ImageLoader::Builtin(builtin) => match builtin {
-                #[cfg(feature = "builtin-image-rs")]
-                ImageBuiltinLoader::ImageRs(image_rs) => {
-                    use glycin_utils::LocalMemory;
-
-                    let frame = image_rs
-                        .lock()
-                        .unwrap()
-                        .frame::<LocalMemory>(frame_request.request)
-                        .map_err(|e| e.into_loader_error())
-                        .err_no_context_legacy(&self.loader.cancellable)?;
-                    Frame::from_loader(frame, self)
-                        .await
-                        .err_no_context_legacy(&self.cancellable())
-                }
-            },
-        }
+        })
     }
 
     /// Returns already obtained info
@@ -528,9 +501,10 @@ struct ImageExternalLoader {
 }
 
 #[cfg(feature = "builtin")]
+#[derive(Clone)]
 enum ImageBuiltinLoader {
     #[cfg(feature = "builtin-image-rs")]
-    ImageRs(Mutex<glycin_image_rs::ImgDecoder>),
+    ImageRs(Arc<Mutex<glycin_image_rs::ImgDecoder>>),
 }
 
 #[cfg(feature = "builtin")]

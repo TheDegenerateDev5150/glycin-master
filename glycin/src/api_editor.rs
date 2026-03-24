@@ -137,7 +137,9 @@ impl Editor {
 
                         Ok(EditableImage {
                             editor: self,
-                            image_editor: ImageEditor::Builtin(ImageEditorBuiltin::ImageRs(editor)),
+                            image_editor: ImageEditor::Builtin(ImageEditorBuiltin::ImageRs(
+                                Arc::new(editor),
+                            )),
                             _mime_type: mime_type,
                         })
                     }
@@ -205,14 +207,21 @@ impl EditableImage {
             #[cfg(feature = "builtin")]
             ImageEditor::Builtin(editor) => match editor {
                 #[cfg(feature = "builtin-image-rs")]
-                ImageEditorBuiltin::ImageRs(editor) => {
-                    let editor_output = editor
-                        .apply_sparse(operations.to_owned())
-                        .map_err(|e| e.into_editor_error())
-                        .err_no_context_legacy(&self.editor.cancellable)?;
+                ImageEditorBuiltin::ImageRs(image_rs_editor) => {
+                    let operations = operations.to_owned();
+                    let image_rs_editor = image_rs_editor.to_owned();
 
-                    SparseEdit::try_from(editor_output)
-                        .err_no_context_legacy(&self.editor.cancellable)
+                    let editor_output = gio::spawn_blocking(move || {
+                        image_rs_editor
+                            .apply_sparse(operations)
+                            .map_err(|e| e.into_editor_error().into())
+                    })
+                    .await
+                    .map_err(|_| Error::ThreadPanic)
+                    .flatten()
+                    .err_no_context()?;
+
+                    SparseEdit::try_from(editor_output).err_no_context()
                 }
             },
         }
@@ -286,9 +295,10 @@ struct ImageEditorExternal {
 }
 
 #[cfg(feature = "builtin")]
+#[derive(Clone)]
 enum ImageEditorBuiltin {
     #[cfg(feature = "builtin-image-rs")]
-    ImageRs(glycin_image_rs::ImgEditor),
+    ImageRs(Arc<glycin_image_rs::ImgEditor>),
 }
 
 #[derive(Debug)]

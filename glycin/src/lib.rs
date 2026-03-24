@@ -107,3 +107,8 @@ pub use pool::{Pool, PoolConfig};
 use pool_shim as pool;
 #[cfg(feature = "gdk4")]
 pub use util::gdk_memory_format;
+
+#[cfg(all(feature = "builtin", not(any(feature = "builtin-image-rs"))))]
+compile_error!(
+    "At least one builtin loader feature like 'builtin-image-rs' has to be enabled if 'builtin' is enabled."
+);

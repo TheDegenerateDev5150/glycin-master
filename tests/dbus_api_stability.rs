@@ -1,6 +1,6 @@
 #[test]
 #[ignore]
-#[cfg(feature = "external")]
+#[cfg(feature = "external-loaders")]
 fn dbus_api_stability() {
     // TODO: This seems overly complicated
     blocking::unblock(|| async_io::block_on(abi_stability::start_dbus())).detach();
@@ -8,7 +8,7 @@ fn dbus_api_stability() {
     abi_stability::check_api_stability("org.gnome.glycin.Editor");
 }
 
-#[cfg(feature = "external")]
+#[cfg(feature = "external-loaders")]
 mod abi_stability {
     pub fn check_api_stability(interface_name: &str) {
         let output = std::process::Command::new("busctl")

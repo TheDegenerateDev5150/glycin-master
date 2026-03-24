@@ -177,13 +177,18 @@ impl Creator {
                 config::BuiltinProcessor::ImageRs(_) => {
                     use glycin_utils::EditorImplementation;
 
-                    let encoded_image = glycin_image_rs::ImgEditor::create(
-                        builtin.mime_type.to_string(),
-                        new_image,
-                        self.encoding_options,
-                    )
-                    .map_err(|e| e.into_editor_error())
-                    .err_no_context_legacy(&self.cancellable)?;
+                    let encoded_image = gio::spawn_blocking(move || {
+                        glycin_image_rs::ImgEditor::create(
+                            builtin.mime_type.to_string(),
+                            new_image,
+                            self.encoding_options,
+                        )
+                        .map_err(|e| e.into_editor_error().into())
+                    })
+                    .await
+                    .map_err(|_| Error::ThreadPanic)
+                    .flatten()
+                    .err_no_context()?;
 
                     EncodedImage::new(encoded_image).await.err_no_context()
                 }

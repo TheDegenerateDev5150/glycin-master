@@ -399,16 +399,7 @@ pub(crate) async fn guess_mime_type(
         (mime_type, unsure)
     }
 
-    // Try with first 8 bytes first, since lookup is faster
-    let short_head = head.get(..8).unwrap_or(head);
-    let (mime_type, unsure) = guess_mime_type_(None, short_head);
-
-    // PNG could be APNG
-    let (mime_type, unsure) = if mime_type.as_ref().map_or(true, |x| x == "image/png") || unsure {
-        guess_mime_type_(None, head)
-    } else {
-        (mime_type, unsure)
-    };
+    let (mime_type, unsure) = guess_mime_type_(None, head);
 
     // Prefer file extension for TIFF since it can be a RAW format as well
     let is_tiff = mime_type.clone().ok() == Some("image/tiff".into());
@@ -423,20 +414,17 @@ pub(crate) async fn guess_mime_type(
     // Prefer file extension for text since it might be an XBM
     let is_text = mime_type.clone().ok() == Some("text/plain".into());
 
-    if (unsure || is_tiff || is_xml || is_gzip || is_text)
+    let mime_type = if (unsure || is_tiff || is_xml || is_gzip || is_text)
         && let Some(filename) = file.and_then(|x| x.basename())
     {
-        let content_type_fn = gio::content_type_guess(Some(filename), head).0;
-        return gio::content_type_get_mime_type(&content_type_fn)
-            .ok_or_else(|| Error::UnknownContentType(content_type_fn.to_string()))
-            .map(|x| MimeType::new(x.to_string()));
-    }
+        guess_mime_type_(Some(filename), head).0?
+    } else {
+        mime_type?
+    };
 
-    let result = mime_type.map(|x| MimeType::new(x.to_string()));
+    tracing::trace!("Mimetype is: '{mime_type}'");
 
-    tracing::trace!("Mimetype is: {result:?}");
-
-    result
+    Ok(MimeType::new(mime_type.to_string()))
 }
 
 static CHECK_MAIN_CONTEXT: LazyLock<std::sync::Mutex<()>> = LazyLock::new(Default::default);
