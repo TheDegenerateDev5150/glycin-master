@@ -150,11 +150,11 @@ impl Source {
 }
 
 #[derive(Debug)]
-pub(crate) struct ProcessorContext<T: GetConfig> {
+pub(crate) struct ProcessorContext<T: GetConfig, S> {
     pub mime_type: MimeType,
     pub sandbox_mechanism: SandboxMechanism,
     pub config_entry: T,
-    pub g_file_worker: Option<SourceTransmission>,
+    pub g_file_worker: S,
     pub base_dir: Option<PathBuf>,
 }
 
@@ -189,7 +189,7 @@ impl GetConfig for ImageEditorConfig {
     }
 }
 
-impl<T: GetConfig + Clone> ProcessorContext<T> {
+impl<T: GetConfig + Clone> ProcessorContext<T, SourceTransmission> {
     /// Determines mime-type, relevant config entry, and sandboxing mode
     ///
     /// Also spawns the file worker since we need to read from the file for
@@ -198,7 +198,7 @@ impl<T: GetConfig + Clone> ProcessorContext<T> {
         source: Source,
         use_expose_base_dir: bool,
         sandbox_selector: &SandboxSelector,
-    ) -> Result<ProcessorContext<T>, Error> {
+    ) -> Result<ProcessorContext<T, SourceTransmission>, Error> {
         let file = source.file();
 
         let source_transmission = SourceTransmission::init(source).await?;
@@ -225,14 +225,16 @@ impl<T: GetConfig + Clone> ProcessorContext<T> {
             base_dir,
             mime_type,
             sandbox_mechanism,
-            g_file_worker: Some(source_transmission),
+            g_file_worker: source_transmission,
         })
     }
+}
 
+impl<T: GetConfig + Clone> ProcessorContext<T, ()> {
     pub async fn new_sourceless(
         mime_type: MimeType,
         sandbox_selector: &SandboxSelector,
-    ) -> Result<ProcessorContext<T>, Error> {
+    ) -> Result<ProcessorContext<T, ()>, Error> {
         let config = Config::cached().await;
         let config_entry = T::config_entry(&config, &mime_type)?.clone();
         let sandbox_mechanism = sandbox_selector.determine_sandbox_mechanism().await;
@@ -242,17 +244,17 @@ impl<T: GetConfig + Clone> ProcessorContext<T> {
             base_dir: None,
             config_entry,
             sandbox_mechanism,
-            g_file_worker: None,
+            g_file_worker: (),
         })
     }
 }
 
-impl ProcessorContext<ImageLoaderConfig> {
+impl<S> ProcessorContext<ImageLoaderConfig, S> {
     pub async fn loader(
         self,
         pool: Arc<Pool>,
         cancellable: &gio::Cancellable,
-    ) -> Result<Processor<LoaderProxy<'static>>, Error> {
+    ) -> Result<Processor<LoaderProxy<'static>, S>, Error> {
         match self.config_entry.processor {
             #[cfg(feature = "external")]
             config::Processor::Binary(_) => self
@@ -274,7 +276,7 @@ impl ProcessorContext<ImageLoaderConfig> {
         self,
         pool: Arc<Pool>,
         cancellable: &gio::Cancellable,
-    ) -> Result<BinaryProcessor<LoaderProxy<'static>>, Error> {
+    ) -> Result<ExternalProcessor<LoaderProxy<'static>, S>, Error> {
         let (process, usage_tracker) = pool
             .clone()
             .get_loader(
@@ -285,7 +287,7 @@ impl ProcessorContext<ImageLoaderConfig> {
             )
             .await?;
 
-        Ok(BinaryProcessor {
+        Ok(ExternalProcessor {
             process,
             usage_tracker,
             source_transmission: self.g_file_worker,
@@ -295,12 +297,12 @@ impl ProcessorContext<ImageLoaderConfig> {
     }
 }
 
-impl ProcessorContext<ImageEditorConfig> {
+impl<S> ProcessorContext<ImageEditorConfig, S> {
     pub async fn editor(
         self,
         pool: Arc<Pool>,
         cancellable: &gio::Cancellable,
-    ) -> Result<Processor<EditorProxy<'static>>, Error> {
+    ) -> Result<Processor<EditorProxy<'static>, S>, Error> {
         match self.config_entry.processor {
             #[cfg(feature = "external")]
             config::Processor::Binary(_) => self
@@ -322,7 +324,7 @@ impl ProcessorContext<ImageEditorConfig> {
         self,
         pool: Arc<Pool>,
         cancellable: &gio::Cancellable,
-    ) -> Result<BinaryProcessor<EditorProxy<'static>>, Error> {
+    ) -> Result<ExternalProcessor<EditorProxy<'static>, S>, Error> {
         let (process, usage_tracker) = pool
             .clone()
             .get_editor(
@@ -333,7 +335,7 @@ impl ProcessorContext<ImageEditorConfig> {
             )
             .await?;
 
-        Ok(BinaryProcessor {
+        Ok(ExternalProcessor {
             process,
             usage_tracker,
             source_transmission: self.g_file_worker,
@@ -352,32 +354,32 @@ impl DBusProxy for EditorProxy<'static> {}
 
 //impl DBusProxy for () {}
 
-pub(crate) enum Processor<P: DBusProxy> {
+pub(crate) enum Processor<P: DBusProxy, S> {
     #[cfg(feature = "external")]
-    Binary(BinaryProcessor<P>),
+    Binary(ExternalProcessor<P, S>),
     #[cfg(feature = "builtin")]
-    Builtin(BuiltinProcessor<P>),
+    Builtin(BuiltinProcessor<P, S>),
 }
 
 #[cfg(feature = "external")]
-pub(crate) struct BinaryProcessor<P: DBusProxy> {
+pub(crate) struct ExternalProcessor<P: DBusProxy, S> {
     pub process: Arc<PooledProcess<P>>,
-    pub source_transmission: Option<SourceTransmission>,
+    pub source_transmission: S,
     pub mime_type: MimeType,
     pub sandbox_mechanism: SandboxMechanism,
     pub usage_tracker: Arc<UsageTracker>,
 }
 
 #[cfg(feature = "builtin")]
-pub(crate) struct BuiltinProcessor<T> {
+pub(crate) struct BuiltinProcessor<T, S> {
     pub builtin: config::BuiltinProcessor,
     pub mime_type: MimeType,
-    pub source_transmission: Option<SourceTransmission>,
+    pub source_transmission: S,
     _phantom_data: PhantomData<T>,
 }
 
 #[cfg(feature = "external")]
-impl<P: DBusProxy> BinaryProcessor<P> {
+impl<P: DBusProxy, S> ExternalProcessor<P, S> {
     pub fn use_process(&self) -> Arc<crate::dbus::RemoteProcess<P>> {
         self.process.use_()
     }

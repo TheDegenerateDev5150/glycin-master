@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "builtin")]
@@ -44,20 +45,22 @@ impl Editor {
         }
     }
 
-    pub async fn edit(self) -> Result<EditableImage, ErrorCtx> {
-        let main_context = self.main_context();
-        let cancellable = self.cancellable.clone();
+    pub fn edit(self) -> Pin<Box<dyn Future<Output = Result<EditableImage, ErrorCtx>> + Send>> {
+        Box::pin(async move {
+            let main_context = self.main_context();
+            let cancellable = self.cancellable.clone();
 
-        let f = || async move { self.edit_internal().await }.make_cancellable(cancellable);
+            let f = || async move { self.edit_internal().await }.make_cancellable(cancellable);
 
-        main_context
-            .spawn_from_within(f)
-            .await
-            .err_no_context()
-            .flatten()
+            main_context
+                .spawn_from_within(f)
+                .await
+                .err_no_context()
+                .flatten()
+        })
     }
 
-    pub async fn edit_internal(mut self) -> Result<EditableImage, ErrorCtx> {
+    async fn edit_internal(mut self) -> Result<EditableImage, ErrorCtx> {
         let source: Source = self.source.send();
 
         let editor_context = ProcessorContext::new(source, false, &self.sandbox_selector)
@@ -76,7 +79,6 @@ impl Editor {
 
                 let (external_reader, load_image_future) = editor
                     .source_transmission
-                    .unwrap()
                     .spawn_external()
                     .err_no_context()?;
 
@@ -117,7 +119,7 @@ impl Editor {
                     #[cfg(feature = "builtin-image-rs")]
                     config::BuiltinProcessor::ImageRs(_) => {
                         let (builtin_reader, read_data_future) =
-                            builtin.source_transmission.unwrap().spawn_builtin();
+                            builtin.source_transmission.spawn_builtin();
 
                         let editor_future = gio::spawn_blocking(move || {
                             glycin_image_rs::ImgEditor::edit(
@@ -188,14 +190,22 @@ impl EditableImage {
     /// Some operations like rotation can be in some cases be conducted by only
     /// changing one or a few bytes in a file. We call these cases *sparse* and
     /// a [`SparseEdit::Sparse`] is returned.
-    pub async fn apply_sparse(self, operations: &Operations) -> Result<SparseEdit, ErrorCtx> {
+    pub fn apply_sparse(
+        self,
+        operations: &Operations,
+    ) -> Pin<Box<dyn Future<Output = Result<SparseEdit, ErrorCtx>> + Send>> {
+        let operations = operations.to_owned();
+        Box::pin(self.apply_sparse_internal(operations))
+    }
+
+    async fn apply_sparse_internal(self, operations: Operations) -> Result<SparseEdit, ErrorCtx> {
         match &self.image_editor {
             #[cfg(feature = "external")]
             ImageEditor::External(editor) => {
                 let process = editor.process.use_();
 
                 let mut editor_output = process
-                    .editor_apply_sparse(operations, &self)
+                    .editor_apply_sparse(&operations, &self)
                     .await
                     .err_context(&process, &self.editor.cancellable)?;
 
@@ -208,7 +218,6 @@ impl EditableImage {
             ImageEditor::Builtin(editor) => match editor {
                 #[cfg(feature = "builtin-image-rs")]
                 ImageEditorBuiltin::ImageRs(image_rs_editor) => {
-                    let operations = operations.to_owned();
                     let image_rs_editor = image_rs_editor.to_owned();
 
                     let editor_output = gio::spawn_blocking(move || {
@@ -228,14 +237,23 @@ impl EditableImage {
     }
 
     /// Apply operations to the image
-    pub async fn apply_complete(self, operations: &Operations) -> Result<Edit, ErrorCtx> {
+    pub fn apply_complete(
+        self,
+        operations: &Operations,
+    ) -> Pin<Box<dyn Future<Output = Result<Edit, ErrorCtx>> + Send>> {
+        let operations = operations.to_owned();
+
+        Box::pin(self.apply_complete_internal(operations))
+    }
+
+    async fn apply_complete_internal(self, operations: Operations) -> Result<Edit, ErrorCtx> {
         match &self.image_editor {
             #[cfg(feature = "external")]
             ImageEditor::External(editor) => {
                 let process = editor.process.use_();
 
                 let mut editor_output = process
-                    .editor_apply_complete(operations, &self)
+                    .editor_apply_complete(&operations, &self)
                     .await
                     .err_context(&process, &self.editor.cancellable)?
                     .into_fungible();
@@ -250,7 +268,7 @@ impl EditableImage {
             ImageEditor::Builtin(editor) => match editor {
                 ImageEditorBuiltin::ImageRs(editor) => {
                     let editor_output = editor
-                        .apply_complete(operations.to_owned())
+                        .apply_complete(operations)
                         .map_err(|e| e.into_editor_error())
                         .err_no_context_legacy(&self.editor.cancellable)?;
 
@@ -304,7 +322,7 @@ enum ImageEditorBuiltin {
 #[derive(Debug)]
 /// An image change that is potentially sparse.
 ///
-/// See also: [`Editor::apply_sparse()`]
+/// See also: [`EditableImage::apply_sparse()`]
 pub enum SparseEdit {
     /// The operations can be applied to the image via only changing a few
     /// bytes. The [`apply_to()`](Self::apply_to()) function can be used to

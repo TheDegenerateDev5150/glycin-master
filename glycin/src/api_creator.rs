@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use glib::object::IsA;
@@ -12,6 +13,7 @@ use crate::config;
 use crate::config::{Config, ImageEditorConfig};
 use crate::error::ResultExt;
 use crate::pool::Pool;
+use crate::util::CancellableFuture;
 use crate::{Error, ErrorCtx, MimeType, Processor, ProcessorContext, SandboxSelector};
 
 #[derive(Debug)]
@@ -133,7 +135,15 @@ impl Creator {
     }
 
     /// Encode an image
-    pub async fn create(self) -> Result<EncodedImage, ErrorCtx> {
+    pub fn create(self) -> Pin<Box<dyn Future<Output = Result<EncodedImage, ErrorCtx>> + Send>> {
+        Box::pin(async move {
+            let cancellable = self.cancellable.clone();
+
+            self.load_internal().make_cancellable(cancellable).await
+        })
+    }
+
+    async fn load_internal(self) -> Result<EncodedImage, ErrorCtx> {
         let mut new_image = self.new_image;
 
         for frame in self.new_frames {

@@ -23,6 +23,8 @@ use crate::dbus::*;
 use crate::error::ResultExt;
 #[cfg(feature = "external")]
 use crate::pool::{PooledProcess, UsageTracker};
+#[cfg(feature = "external")]
+use crate::source::SourceTransmission;
 use crate::util::{spawn_blocking, spawn_detached};
 use crate::{Error, ErrorCtx, MAX_TEXTURE_SIZE, Pool, config, icc, orientation, util};
 
@@ -132,7 +134,7 @@ impl Loader {
     }
 
     /// Load basic image information and enable further operations
-    pub fn load(mut self) -> Pin<Box<dyn Future<Output = Result<Image, ErrorCtx>>>> {
+    pub fn load(mut self) -> Pin<Box<dyn Future<Output = Result<Image, ErrorCtx>> + Send>> {
         Box::pin(async {
             let source = self.source.send();
             let main_context = self.main_context();
@@ -171,14 +173,13 @@ impl Loader {
     #[cfg(feature = "external")]
     async fn load_internal_external(
         self,
-        binary_loader: BinaryProcessor<LoaderProxy<'static>>,
+        binary_loader: ExternalProcessor<LoaderProxy<'static>, SourceTransmission>,
     ) -> Result<Image, ErrorCtx> {
         tracing::debug!("Using external loader");
 
         let process = binary_loader.use_process();
         let (remote_reader, file_read_future) = binary_loader
             .source_transmission
-            .unwrap()
             .spawn_external()
             .err_no_context()?;
 
@@ -233,15 +234,14 @@ impl Loader {
     #[cfg(feature = "builtin")]
     async fn load_internal_builtin<P: DBusProxy>(
         self,
-        builtin: BuiltinProcessor<P>,
+        builtin: BuiltinProcessor<P, SourceTransmission>,
     ) -> Result<Image, ErrorCtx> {
         tracing::debug!("Using builtin loader '{}'", builtin.builtin.common().name());
 
         match builtin.builtin {
             #[cfg(feature = "builtin-image-rs")]
             config::BuiltinProcessor::ImageRs(_) => {
-                let (source_reader, file_read_future) =
-                    builtin.source_transmission.unwrap().spawn_builtin();
+                let (source_reader, file_read_future) = builtin.source_transmission.spawn_builtin();
 
                 let mime_type = builtin.mime_type.clone();
 
@@ -352,7 +352,9 @@ impl Image {
     /// Loads texture and information of the next frame. For single still
     /// images, this can only be called once. For animated images, this
     /// function will loop to the first frame, when the last frame is reached.
-    pub fn next_frame<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<Frame, ErrorCtx>> + 'a>> {
+    pub fn next_frame<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<Frame, ErrorCtx>> + 'a + Send>> {
         self.specific_frame(FrameRequest::default())
     }
 
@@ -363,48 +365,59 @@ impl Image {
     pub fn specific_frame<'a>(
         &'a self,
         frame_request: FrameRequest,
-    ) -> Pin<Box<dyn Future<Output = Result<Frame, ErrorCtx>> + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Frame, ErrorCtx>> + 'a + Send>> {
         Box::pin(async move {
-            match &self.image_loader {
-                #[cfg(feature = "external")]
-                ImageLoader::Binary(image_loader) => {
-                    let process = image_loader.process.use_();
+            let cancellable = self.loader.cancellable.clone();
 
-                    let frame = process
-                        .request_frame(frame_request.request, self)
-                        .await
-                        .err_context(&process, &self.cancellable())?;
+            self.specific_frame_internal(frame_request)
+                .make_cancellable(cancellable)
+                .await
+        })
+    }
 
-                    Frame::from_loader(frame, &self)
+    async fn specific_frame_internal(
+        &self,
+        frame_request: FrameRequest,
+    ) -> Result<Frame, ErrorCtx> {
+        match &self.image_loader {
+            #[cfg(feature = "external")]
+            ImageLoader::Binary(image_loader) => {
+                let process = image_loader.process.use_();
+
+                let frame = process
+                    .request_frame(frame_request.request, self)
+                    .await
+                    .err_context(&process, &self.cancellable())?;
+
+                Frame::from_loader(frame, &self)
+                    .await
+                    .err_no_context_legacy(&self.cancellable())
+            }
+            #[cfg(feature = "builtin")]
+            ImageLoader::Builtin(builtin) => match builtin {
+                #[cfg(feature = "builtin-image-rs")]
+                ImageBuiltinLoader::ImageRs(image_rs) => {
+                    use glycin_utils::LocalMemory;
+
+                    let image_rs = image_rs.to_owned();
+
+                    let frame = gio::spawn_blocking(move || {
+                        image_rs
+                            .lock()
+                            .unwrap()
+                            .frame::<LocalMemory>(frame_request.request)
+                            .map_err(|e| e.into_loader_error())
+                    })
+                    .await
+                    .unwrap()
+                    .err_no_context_legacy(&self.loader.cancellable)?;
+
+                    Frame::from_loader(frame, self)
                         .await
                         .err_no_context_legacy(&self.cancellable())
                 }
-                #[cfg(feature = "builtin")]
-                ImageLoader::Builtin(builtin) => match builtin {
-                    #[cfg(feature = "builtin-image-rs")]
-                    ImageBuiltinLoader::ImageRs(image_rs) => {
-                        use glycin_utils::LocalMemory;
-
-                        let image_rs = image_rs.to_owned();
-
-                        let frame = gio::spawn_blocking(move || {
-                            image_rs
-                                .lock()
-                                .unwrap()
-                                .frame::<LocalMemory>(frame_request.request)
-                                .map_err(|e| e.into_loader_error())
-                        })
-                        .await
-                        .unwrap()
-                        .err_no_context_legacy(&self.loader.cancellable)?;
-
-                        Frame::from_loader(frame, self)
-                            .await
-                            .err_no_context_legacy(&self.cancellable())
-                    }
-                },
-            }
-        })
+            },
+        }
     }
 
     /// Returns already obtained info
