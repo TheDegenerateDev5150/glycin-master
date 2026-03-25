@@ -8,7 +8,7 @@ use image::imageops;
 const SCALE_FILTER1: imageops::FilterType = imageops::FilterType::Nearest;
 const SCALE_FILTER2: imageops::FilterType = imageops::FilterType::Triangle;
 
-fn main() {
+fn main() -> glib::ExitCode {
     let app = gio::Application::new(None, gio::ApplicationFlags::HANDLES_COMMAND_LINE);
 
     app.add_main_option(
@@ -64,7 +64,7 @@ fn main() {
         }
     });
 
-    app.run();
+    app.run()
 }
 
 fn x(
