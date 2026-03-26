@@ -123,4 +123,7 @@ $ cargo +nightly fmt
 ##
 
 - cargo install cross --git https://github.com/cross-rs/cross
-- cross build -p glycin --features builtin-image-rs --target x86_64-pc-windows-gnu
+- cross build -p glycin --features builtin-image-rs,gdk4 --target x86_64-pc-windows-gnu
+- cross test -p tests --no-default-features --features builtin-loaders,async-io --target x86_64-pc-windows-gnu
+
+The tests currently fail.

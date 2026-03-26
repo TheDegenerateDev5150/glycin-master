@@ -130,3 +130,6 @@ zerocopy = "0.8.12"
 
 [workspace.metadata.cross.target.x86_64-pc-windows-gnu]
 dockerfile = "build-aux/cross/Dockerfile.windows"
+
+[workspace.metadata.cross.build.env]
+passthrough = ["GLYCIN_TEST_SKIP_EXT"]
