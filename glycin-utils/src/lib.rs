@@ -24,10 +24,6 @@ pub mod instruction_handler;
 mod memory;
 pub mod safe_math;
 
-#[cfg(feature = "loader-utils")]
-#[doc(no_inline)]
-pub use std::os::unix::net::UnixStream;
-
 //pub use img_buf::ImgBuf;
 pub use api::*;
 #[cfg(feature = "builtin")]

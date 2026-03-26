@@ -22,9 +22,9 @@ async-io = [
     "dep:futures-timer",
     "dep:futures-lite",
     "glycin-utils/async-io",
-    "zbus/async-io",
+    "zbus?/async-io",
 ]
-tokio = ["dep:tokio", "dep:tokio-stream", "glycin-utils/tokio", "zbus/tokio"]
+tokio = ["dep:tokio", "dep:tokio-stream", "glycin-utils/tokio", "zbus?/tokio"]
 gobject = [
     "glycin-common/gobject",
     "glycin-utils/gobject",
@@ -58,12 +58,13 @@ futures-timer = { workspace = true, optional = true }
 futures-util.workspace = true
 gdk = { workspace = true, optional = true }
 gio.workspace = true
+gio-unix = { workspace = true, optional = true }
 glib.workspace = true
 glycin-common.workspace = true
 glycin-utils = { workspace = true, features = ["glib"] }
+glycin-image-rs = { workspace = true, optional = true, features = ["builtin"] }
 gufo-common.workspace = true
 gufo-exif.workspace = true
-glycin-image-rs = { workspace = true, optional = true }
 lcms2-sys.workspace = true
 lcms2.workspace = true
 libc.workspace = true
@@ -82,7 +83,6 @@ tracing-subscriber = { workspace = true, optional = true }
 tracing.workspace = true
 yeslogic-fontconfig-sys = { workspace = true, optional = true }
 zbus = { workspace = true, features = ["p2p"], optional = true }
-gio-unix = { workspace = true, optional = true }
 
 [package.metadata.docs.rs]
 features = ["gdk4"]

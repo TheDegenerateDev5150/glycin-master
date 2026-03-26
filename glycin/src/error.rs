@@ -161,6 +161,7 @@ pub enum Error {
         info: String,
     },
     #[error("D-Bus error: {0}")]
+    #[cfg(feature = "external")]
     DbusError(#[from] zbus::Error),
     #[error("Internal communication was unexpectedly canceled")]
     InternalCommunicationCanceled,

@@ -1,3 +1,4 @@
+#[cfg(feature = "external")]
 use std::os::unix::net::UnixStream;
 
 #[cfg(feature = "builtin")]

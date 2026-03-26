@@ -60,23 +60,37 @@ impl RemoteEditableImage {
 ///
 /// This either contains `byte_changes` or `data`, depending on whether a sparse
 /// application of the operations was possible.
-#[derive(Deserialize, Serialize, Type, Debug)]
-#[zvariant(signature = "dict")]
+#[derive(Debug)]
+#[cfg_attr(feature = "external", derive(Type, Serialize, Deserialize))]
+#[cfg_attr(feature = "external", zvariant(signature = "dict"))]
+#[cfg_attr(
+    feature = "external",
+    serde(bound(
+        serialize = "B: ByteData + serde::Serialize + zbus::zvariant::Type + 'static",
+        deserialize = "B: ByteData + serde::de::DeserializeOwned + zbus::zvariant::Type + 'static"
+    ))
+)]
 #[non_exhaustive]
 pub struct SparseEditorOutput<B: ByteData> {
-    #[serde(
-        with = "as_value::optional",
-        skip_serializing_if = "Option::is_none",
-        default
+    #[cfg_attr(
+        feature = "external",
+        serde(
+            with = "as_value::optional",
+            skip_serializing_if = "Option::is_none",
+            default
+        )
     )]
     pub byte_changes: Option<ByteChanges>,
-    #[serde(
-        with = "as_value::optional",
-        skip_serializing_if = "Option::is_none",
-        default
+    #[cfg_attr(
+        feature = "external",
+        serde(
+            with = "as_value::optional",
+            skip_serializing_if = "Option::is_none",
+            default
+        )
     )]
     pub data: Option<B>,
-    #[serde(with = "as_value")]
+    #[cfg_attr(feature = "external", serde(with = "as_value"))]
     pub info: EditorOutputInfo,
 }
 
@@ -159,15 +173,37 @@ impl ByteChanges {
     }
 }
 
-#[derive(Deserialize, Serialize, Type, Debug)]
-#[zvariant(signature = "dict")]
+#[derive(Debug)]
+#[cfg_attr(feature = "external", derive(Type, Serialize, Deserialize))]
+#[cfg_attr(feature = "external", zvariant(signature = "dict"))]
+#[cfg_attr(
+    feature = "external",
+    serde(bound(
+        serialize = "B: ByteData + serde::Serialize + zbus::zvariant::Type + 'static",
+        deserialize = "B: ByteData + serde::de::DeserializeOwned + zbus::zvariant::Type + 'static"
+    ))
+)]
 #[non_exhaustive]
 pub struct CompleteEditorOutput<B: ByteData> {
-    #[serde(with = "as_value")]
+    #[cfg_attr(feature = "external", serde(with = "as_value"))]
     pub data: B,
-    #[serde(with = "as_value")]
+    #[cfg_attr(feature = "external", serde(with = "as_value"))]
     pub info: EditorOutputInfo,
 }
+
+/*
+#[cfg(feature = "external")]
+impl zvariant::Type for CompleteEditorOutput<crate::SharedMemory> {
+    const SIGNATURE: &'static zvariant::Signature = &zvariant::Signature::Dict {
+        key: zvariant::signature::Child::Static {
+            child: &zvariant::Signature::Str,
+        },
+        value: zvariant::signature::Child::Static {
+            child: &zvariant::Signature::Variant,
+        },
+    };
+}
+    */
 
 impl<B: ByteData> CompleteEditorOutput<B> {
     pub fn new(data: B) -> Self {

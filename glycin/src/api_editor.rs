@@ -12,6 +12,7 @@ use glycin_utils::safe_math::SafeConversion;
 use glycin_utils::{
     ByteChanges, ByteData, CompleteEditorOutput, FungibleMemory, Operations, SparseEditorOutput,
 };
+#[cfg(feature = "external")]
 use zbus::zvariant::OwnedObjectPath;
 
 use crate::api_common::*;

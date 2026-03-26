@@ -81,9 +81,7 @@ glib-sys = { version = "0.22.0", features = ["v2_68"] }
 gobject-sys = { version = "0.22.0", features = ["v2_68"] }
 glycin = { path = "glycin/", default-features = false }
 glycin-common = { version = "1.0.4", path = "glycin-common/" }
-glycin-image-rs = { version = "2.1.0", path = "glycin-loaders/glycin-image-rs", features = [
-    "builtin",
-] }
+glycin-image-rs = { version = "2.1.0", path = "glycin-loaders/glycin-image-rs", default-features = false }
 glycin-utils = { version = "4.1.0", path = "glycin-utils/", default-features = false }
 gufo = { version = "0.4.1", features = ["all-image-formats"] }
 gufo-common = { version = "1.1.0", features = ["serde"] }
@@ -129,3 +127,6 @@ zbus = { version = "5.10.0", default-features = false, features = ["p2p"] }
 # <https://github.com/z-galaxy/zbus/commit/82533888fe1780581bf1d0c3025f2fd37eac65b5>
 zvariant = { version = "5.9.2", default-features = false }
 zerocopy = "0.8.12"
+
+[workspace.metadata.cross.target.x86_64-pc-windows-gnu]
+dockerfile = "build-aux/cross/Dockerfile.windows"

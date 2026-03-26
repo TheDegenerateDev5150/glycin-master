@@ -14,6 +14,7 @@ use glycin_utils::{ByteData, FungibleMemory};
 use gufo_common::cicp::Cicp;
 use gufo_common::orientation::{Orientation, Rotation};
 use util::{CancellableFuture, ShortcutErrorFuture};
+#[cfg(feature = "external")]
 use zbus::zvariant::OwnedObjectPath;
 
 use crate::api_common::*;
@@ -23,7 +24,6 @@ use crate::dbus::*;
 use crate::error::ResultExt;
 #[cfg(feature = "external")]
 use crate::pool::{PooledProcess, UsageTracker};
-#[cfg(feature = "external")]
 use crate::source::SourceTransmission;
 use crate::util::{spawn_blocking, spawn_detached};
 use crate::{Error, ErrorCtx, MAX_TEXTURE_SIZE, Pool, config, icc, orientation, util};

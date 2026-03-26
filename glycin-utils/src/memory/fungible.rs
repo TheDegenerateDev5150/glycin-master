@@ -5,15 +5,11 @@ use zbus::zvariant;
 
 use crate::{ByteData, MemoryAllocationError};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub enum FungibleMemory {
     #[cfg(feature = "external")]
     SharedMemory(crate::SharedMemory),
     LocalMemory(Vec<u8>),
-}
-
-impl zvariant::Type for FungibleMemory {
-    const SIGNATURE: &'static zvariant::Signature = zvariant::OwnedFd::SIGNATURE;
 }
 
 impl FungibleMemory {

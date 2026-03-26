@@ -33,7 +33,7 @@ rayon.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, optional = true }
-zbus.workspace = true
+zbus = { workspace = true, optional = true }
 zerocopy.workspace = true
 
 [features]
@@ -45,7 +45,7 @@ loader-utils = ["dep:futures-lite"]
 gobject = ["glib"]
 glib = ["dep:glib"]
 builtin = []
-external = ["dep:libseccomp", "dep:memfd", "dep:memmap", "dep:nix"]
+external = ["dep:libseccomp", "dep:memfd", "dep:memmap", "dep:nix", "dep:zbus"]
 
 [package.metadata.docs.rs]
 features = ["image-rs", "loader-utils"]

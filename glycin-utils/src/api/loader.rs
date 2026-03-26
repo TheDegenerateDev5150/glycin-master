@@ -23,6 +23,7 @@ pub trait LoaderImplementation: Send + Sync + Sized + 'static {
     -> Result<Frame<T>, ProcessError>;
 }
 
+#[cfg(feature = "external")]
 #[derive(Deserialize, Serialize, Type, Debug)]
 pub struct InitRequest {
     /// Source from which the loader reads the image data
@@ -70,8 +71,17 @@ impl Default for FrameRequest {
 /// Various image metadata
 ///
 /// This is returned from the initial `InitRequest` call
-#[derive(Deserialize, Serialize, Type, Debug)]
-#[serde(bound(deserialize = "B: ByteData"))]
+#[derive(Debug)]
+#[cfg_attr(feature = "external", derive(Type, Serialize, Deserialize))]
+#[cfg_attr(feature = "external", zvariant(signature = "dict"))]
+#[cfg_attr(
+    feature = "external",
+    serde(bound(
+        serialize = "B: ByteData + serde::Serialize + zbus::zvariant::Type + 'static",
+        deserialize = "B: ByteData + serde::de::DeserializeOwned + zbus::zvariant::Type + 'static"
+    ))
+)]
+#[non_exhaustive]
 pub struct RemoteImage<B: ByteData> {
     pub frame_request: zvariant::OwnedObjectPath,
     pub details: ImageDetails<B>,
@@ -94,9 +104,16 @@ impl<B: ByteData> RemoteImage<B> {
     }
 }
 
-#[derive(Deserialize, Serialize, Type, Debug)]
-#[zvariant(signature = "dict")]
-#[serde(bound(deserialize = "B: ByteData"))]
+#[derive(Debug)]
+#[cfg_attr(feature = "external", derive(Type, Serialize, Deserialize))]
+#[cfg_attr(feature = "external", zvariant(signature = "dict"))]
+#[cfg_attr(
+    feature = "external",
+    serde(bound(
+        serialize = "B: ByteData + serde::Serialize + zbus::zvariant::Type + 'static",
+        deserialize = "B: ByteData + serde::de::DeserializeOwned + zbus::zvariant::Type + 'static"
+    ))
+)]
 #[non_exhaustive]
 pub struct ImageDetails<B: ByteData> {
     /// Early dimension information.
@@ -104,55 +121,76 @@ pub struct ImageDetails<B: ByteData> {
     /// This information is often correct. However, it should only be used for
     /// an early rendering estimates. For everything else, the specific frame
     /// information should be used.
-    #[serde(with = "as_value")]
+    #[cfg_attr(feature = "external", serde(with = "as_value"))]
     pub width: u32,
-    #[serde(with = "as_value")]
+    #[cfg_attr(feature = "external", serde(with = "as_value"))]
     pub height: u32,
     /// Image dimensions in inch
-    #[serde(
-        with = "as_value::optional",
-        skip_serializing_if = "Option::is_none",
-        default
+    #[cfg_attr(
+        feature = "external",
+        serde(
+            with = "as_value::optional",
+            skip_serializing_if = "Option::is_none",
+            default
+        )
     )]
     pub dimensions_inch: Option<(f64, f64)>,
-    #[serde(
-        with = "as_value::optional",
-        skip_serializing_if = "Option::is_none",
-        default
+    #[cfg_attr(
+        feature = "external",
+        serde(
+            with = "as_value::optional",
+            skip_serializing_if = "Option::is_none",
+            default
+        )
     )]
     pub info_format_name: Option<String>,
     /// Textual description of the image dimensions
-    #[serde(
-        with = "as_value::optional",
-        skip_serializing_if = "Option::is_none",
-        default
+    #[cfg_attr(
+        feature = "external",
+        serde(
+            with = "as_value::optional",
+            skip_serializing_if = "Option::is_none",
+            default
+        )
     )]
     pub info_dimensions_text: Option<String>,
-    #[serde(
-        with = "as_value::optional",
-        skip_serializing_if = "Option::is_none",
-        default
+    #[cfg_attr(
+        feature = "external",
+        serde(
+            with = "as_value::optional",
+            skip_serializing_if = "Option::is_none",
+            default
+        )
     )]
     pub metadata_exif: Option<B>,
-    #[serde(
-        with = "as_value::optional",
-        skip_serializing_if = "Option::is_none",
-        default
+    #[cfg_attr(
+        feature = "external",
+        serde(
+            with = "as_value::optional",
+            skip_serializing_if = "Option::is_none",
+            default
+        )
     )]
     pub metadata_xmp: Option<B>,
-    #[serde(
-        with = "as_value::optional",
-        skip_serializing_if = "Option::is_none",
-        default
+    #[cfg_attr(
+        feature = "external",
+        serde(
+            with = "as_value::optional",
+            skip_serializing_if = "Option::is_none",
+            default
+        )
     )]
     pub metadata_key_value: Option<BTreeMap<String, String>>,
-    #[serde(with = "as_value")]
+    #[cfg_attr(feature = "external", serde(with = "as_value"))]
     pub transformation_ignore_exif: bool,
     /// Explicit orientation. If `None` check Exif or XMP.
-    #[serde(
-        with = "as_value::optional",
-        skip_serializing_if = "Option::is_none",
-        default
+    #[cfg_attr(
+        feature = "external",
+        serde(
+            with = "as_value::optional",
+            skip_serializing_if = "Option::is_none",
+            default
+        )
     )]
     pub transformation_orientation: Option<Orientation>,
 }
@@ -241,8 +279,16 @@ impl<B: ByteData> Default for FrameDetails<B> {
     }
 }
 
-#[derive(Deserialize, Serialize, Type, Debug)]
-#[serde(bound(deserialize = "B: ByteData"))]
+#[derive(Debug)]
+#[cfg_attr(feature = "external", derive(Type, Serialize, Deserialize))]
+#[cfg_attr(feature = "external", zvariant(signature = "dict"))]
+#[cfg_attr(
+    feature = "external",
+    serde(bound(
+        serialize = "B: ByteData + serde::Serialize + zbus::zvariant::Type + 'static",
+        deserialize = "B: ByteData + serde::de::DeserializeOwned + zbus::zvariant::Type + 'static"
+    ))
+)]
 pub struct Frame<B: ByteData> {
     pub width: u32,
     pub height: u32,
@@ -330,57 +376,83 @@ impl<B: ByteData> Frame<B> {
     }
 }
 
-#[derive(Deserialize, Serialize, Type, Debug)]
-#[zvariant(signature = "dict")]
-#[serde(bound(deserialize = "B: ByteData"))]
+#[derive(Debug)]
+#[cfg_attr(feature = "external", derive(Type, Serialize, Deserialize))]
+#[cfg_attr(feature = "external", zvariant(signature = "dict"))]
+#[cfg_attr(
+    feature = "external",
+    serde(bound(
+        serialize = "B: ByteData + serde::Serialize + zbus::zvariant::Type + 'static",
+        deserialize = "B: ByteData + serde::de::DeserializeOwned + zbus::zvariant::Type + 'static"
+    ))
+)]
+//#[serde(bound(deserialize = "B: ByteData"))]
 #[non_exhaustive]
 /// More information about a frame
 pub struct FrameDetails<B: ByteData> {
     /// ICC color profile
-    #[serde(
-        with = "as_value::optional",
-        skip_serializing_if = "Option::is_none",
-        default
+    #[cfg_attr(
+        feature = "external",
+        serde(
+            with = "as_value::optional",
+            skip_serializing_if = "Option::is_none",
+            default
+        )
     )]
     pub color_icc_profile: Option<B>,
     /// Coding-independent code points (HDR information)
-    #[serde(
-        with = "as_value::optional",
-        skip_serializing_if = "Option::is_none",
-        default
+    #[cfg_attr(
+        feature = "external",
+        serde(
+            with = "as_value::optional",
+            skip_serializing_if = "Option::is_none",
+            default
+        )
     )]
     pub color_cicp: Option<[u8; 4]>,
     /// Bit depth per channel
     ///
     /// Only set if it can differ for the format
-    #[serde(
-        with = "as_value::optional",
-        skip_serializing_if = "Option::is_none",
-        default
+    #[cfg_attr(
+        feature = "external",
+        serde(
+            with = "as_value::optional",
+            skip_serializing_if = "Option::is_none",
+            default
+        )
     )]
     pub info_bit_depth: Option<u8>,
     /// Image has alpha channel
     ///
     /// Only set if it can differ for the format
-    #[serde(
-        with = "as_value::optional",
-        skip_serializing_if = "Option::is_none",
-        default
+    #[cfg_attr(
+        feature = "external",
+        serde(
+            with = "as_value::optional",
+            skip_serializing_if = "Option::is_none",
+            default
+        )
     )]
     pub info_alpha_channel: Option<bool>,
     /// Image uses grayscale mode
     ///
     /// Only set if it can differ for the format
-    #[serde(
-        with = "as_value::optional",
-        skip_serializing_if = "Option::is_none",
-        default
+    #[cfg_attr(
+        feature = "external",
+        serde(
+            with = "as_value::optional",
+            skip_serializing_if = "Option::is_none",
+            default
+        )
     )]
     pub info_grayscale: Option<bool>,
-    #[serde(
-        with = "as_value::optional",
-        skip_serializing_if = "Option::is_none",
-        default
+    #[cfg_attr(
+        feature = "external",
+        serde(
+            with = "as_value::optional",
+            skip_serializing_if = "Option::is_none",
+            default
+        )
     )]
     pub n_frame: Option<u64>,
 }

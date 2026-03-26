@@ -311,8 +311,8 @@ pub use futures_lite::AsyncWriteExt;
 #[cfg(feature = "tokio")]
 pub use tokio::io::AsyncWriteExt;
 
-#[cfg(not(feature = "tokio"))]
+#[cfg(all(not(feature = "tokio"), feature = "external"))]
 pub type UnixStream = async_io::Async<std::os::unix::net::UnixStream>;
 
-#[cfg(feature = "tokio")]
+#[cfg(all(feature = "tokio", feature = "external"))]
 pub use tokio::net::UnixStream;

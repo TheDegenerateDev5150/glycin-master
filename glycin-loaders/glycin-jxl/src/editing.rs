@@ -1,7 +1,8 @@
+use std::io::Read;
+
 use glycin_common::ChannelType;
 use glycin_utils::{
     ByteData, EditorImplementation, GenericContexts, MemoryFormatInfo, MemoryFormatSelection,
-    SharedMemory,
 };
 use jpegxl_rs::encode::{EncoderFrame, Metadata};
 
@@ -10,8 +11,8 @@ pub struct ImgEditor {
 }
 
 impl EditorImplementation for ImgEditor {
-    fn edit(
-        _stream: std::os::unix::net::UnixStream,
+    fn edit<S: Read>(
+        _stream: S,
         mime_type: String,
         _details: glycin_utils::InitializationDetails,
     ) -> Result<Self, glycin_utils::ProcessError> {

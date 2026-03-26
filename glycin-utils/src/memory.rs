@@ -1,7 +1,5 @@
 use std::ops::{Deref, DerefMut};
 
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 pub use zbus::zvariant;
 
 mod fungible;
@@ -25,9 +23,7 @@ impl std::fmt::Display for MemoryAllocationError {
 
 impl std::error::Error for MemoryAllocationError {}
 
-pub trait ByteData:
-    zvariant::Type + Sized + Deref<Target = [u8]> + DerefMut + Serialize + DeserializeOwned + 'static
-{
+pub trait ByteData: Sized + Deref<Target = [u8]> + DerefMut + 'static {
     fn new(size: u64) -> std::io::Result<Self>;
     fn into_fungible(self) -> FungibleMemory;
     fn into_other<O: ByteData>(self) -> Result<O, MemoryAllocationError>;

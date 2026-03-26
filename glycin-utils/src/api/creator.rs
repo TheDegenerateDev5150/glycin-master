@@ -3,13 +3,21 @@ use zbus::zvariant::{DeserializeDict, SerializeDict, Type, as_value};
 
 use crate::{ByteData, FungibleMemory, MemoryAllocationError, api};
 
-#[derive(Deserialize, Serialize, Type, Debug)]
-#[zvariant(signature = "dict")]
+#[derive(Debug)]
+#[cfg_attr(feature = "external", derive(Type, Serialize, Deserialize))]
+#[cfg_attr(feature = "external", zvariant(signature = "dict"))]
+#[cfg_attr(
+    feature = "external",
+    serde(bound(
+        serialize = "B: ByteData + serde::Serialize + zbus::zvariant::Type + 'static",
+        deserialize = "B: ByteData + serde::de::DeserializeOwned + zbus::zvariant::Type + 'static"
+    ))
+)]
 #[non_exhaustive]
 pub struct NewImage<B: ByteData> {
-    #[serde(with = "as_value")]
+    #[cfg_attr(feature = "external", serde(with = "as_value"))]
     pub image_info: api::ImageDetails<B>,
-    #[serde(with = "as_value")]
+    #[cfg_attr(feature = "external", serde(with = "as_value"))]
     pub frames: Vec<api::Frame<B>>,
 }
 
@@ -46,12 +54,19 @@ pub struct EncodingOptions {
     pub compression: Option<u8>,
 }
 
-#[derive(Deserialize, Serialize, Type, Debug)]
-#[zvariant(signature = "dict")]
-#[serde(bound(deserialize = "B: ByteData"))]
+#[derive(Debug)]
+#[cfg_attr(feature = "external", derive(Type, Serialize, Deserialize))]
+#[cfg_attr(feature = "external", zvariant(signature = "dict"))]
+#[cfg_attr(
+    feature = "external",
+    serde(bound(
+        serialize = "B: ByteData + serde::Serialize + zbus::zvariant::Type + 'static",
+        deserialize = "B: ByteData + serde::de::DeserializeOwned + zbus::zvariant::Type + 'static"
+    ))
+)]
 #[non_exhaustive]
 pub struct EncodedImage<B: ByteData> {
-    #[serde(with = "as_value")]
+    #[cfg_attr(feature = "external", serde(with = "as_value"))]
     pub data: B,
 }
 

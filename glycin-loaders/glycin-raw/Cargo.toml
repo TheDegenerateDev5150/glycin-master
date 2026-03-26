@@ -11,6 +11,10 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-glycin-utils = { workspace = true, features = ["async-io", "loader-utils"] }
+glycin-utils = { workspace = true, features = [
+    "async-io",
+    "loader-utils",
+    "external",
+] }
 gufo-common = { workspace = true, features = ["serde", "zvariant"] }
 libopenraw = "=0.4.0-alpha.12"

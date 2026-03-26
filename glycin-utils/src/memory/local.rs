@@ -1,11 +1,8 @@
 use std::ops::{Deref, DerefMut};
 
-use serde::{Deserialize, Serialize};
-use zbus::zvariant;
-
 use crate::{ByteData, FungibleMemory, MemoryAllocationError};
 
-#[derive(Debug, zvariant::Type, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone)]
 pub struct LocalMemory(Vec<u8>);
 
 impl LocalMemory {

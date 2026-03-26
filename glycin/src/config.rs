@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
+#[cfg(feature = "external")]
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;

@@ -11,7 +11,11 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-glycin-utils = { workspace = true, features = ["async-io", "loader-utils"] }
+glycin-utils = { workspace = true, features = [
+    "async-io",
+    "loader-utils",
+    "external",
+] }
 glycin-common.workspace = true
 gufo-common.workspace = true
 jpegxl-rs = { version = "0.12.0", default-features = false }
