@@ -9,7 +9,7 @@ use glycin_utils::{DimensionTooLargerError, MemoryAllocationError, RemoteError};
 
 #[cfg(feature = "external")]
 use crate::dbus::RemoteProcess;
-use crate::{DBusProxy, MAX_TEXTURE_SIZE, config};
+use crate::{DBusProxy, FeatureNotSupported, MAX_TEXTURE_SIZE, config};
 
 #[derive(Debug, Clone, Default)]
 pub struct ErrorContext {
@@ -224,6 +224,8 @@ pub enum Error {
     JoinError(String),
     #[error("Thread panic")]
     ThreadPanic,
+    #[error("Feature not supported: {0}")]
+    FeatureNotSupported(#[from] FeatureNotSupported),
 }
 
 impl Error {

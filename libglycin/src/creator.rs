@@ -83,7 +83,7 @@ pub unsafe extern "C" fn gly_creator_add_frame(
         let data = glib::Bytes::from_glib_ptr_borrow(&data).clone();
 
         let new_frame: Result<gobject::GlyNewFrame, glycin::Error> =
-            obj.add_frame(width, height, memory_format, data.to_vec());
+            glib::MainContext::new().block_on(obj.add_frame(width, height, memory_format, data));
 
         match new_frame {
             Ok(new_frame) => new_frame.into_glib_ptr(),
@@ -110,8 +110,8 @@ pub unsafe extern "C" fn gly_creator_add_frame_with_stride(
         let memory_format = glycin::MemoryFormat::try_from(memory_format).unwrap();
         let data = glib::Bytes::from_glib_ptr_borrow(&data).clone();
 
-        let new_frame: Result<gobject::GlyNewFrame, glycin::Error> =
-            obj.add_frame_with_stride(width, height, stride, memory_format, data.to_vec());
+        let new_frame: Result<gobject::GlyNewFrame, glycin::Error> = glib::MainContext::new()
+            .block_on(obj.add_frame_with_stride(width, height, stride, memory_format, data));
 
         match new_frame {
             Ok(new_frame) => new_frame.into_glib_ptr(),

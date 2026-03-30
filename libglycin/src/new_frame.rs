@@ -20,19 +20,15 @@ pub unsafe extern "C" fn gly_new_frame_set_color_icc_profile(
         let new_frame = gobject::GlyNewFrame::from_glib_ptr_borrow(&new_frame);
 
         if icc_profile.is_null() {
-            new_frame
-                .new_frame()
-                .set_color_icc_profile(None)
-                .is_ok()
-                .into_glib()
+            new_frame.set_color_icc_profile(None::<&glib::Bytes>);
+
+            true.into_glib()
         } else {
             let icc_profile = glib::Bytes::from_glib_ptr_borrow(&icc_profile);
 
-            new_frame
-                .new_frame()
-                .set_color_icc_profile(Some(icc_profile.to_vec()))
-                .is_ok()
-                .into_glib()
+            new_frame.set_color_icc_profile(Some(icc_profile.clone()));
+
+            true.into_glib()
         }
     }
 }

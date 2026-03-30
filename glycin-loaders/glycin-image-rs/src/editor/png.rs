@@ -42,7 +42,7 @@ pub fn apply<B: ByteData>(
         operations.prepend(Operations::new_orientation(orientation));
     }
 
-    let mut editing_frame = img_editor.editing_frame.clone();
+    let editing_frame = img_editor.editing_frame.clone();
     let mut old_png = img_editor.png.clone();
 
     let editing_frame =

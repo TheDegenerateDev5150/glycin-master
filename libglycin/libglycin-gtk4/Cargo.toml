@@ -12,7 +12,12 @@ rust-version.workspace = true
 
 [dependencies]
 gdk.workspace = true
-glycin = { workspace = true, features = ["async-io", "gobject", "gdk4"] }
+glycin = { workspace = true, features = [
+    "async-io",
+    "gobject",
+    "gdk4",
+    "external",
+] }
 
 [build-dependencies]
 system-deps.workspace = true

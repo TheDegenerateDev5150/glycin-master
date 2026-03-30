@@ -27,6 +27,7 @@ pub mod imp {
         mime_type: OnceLock<String>,
 
         pub(super) creator: AsyncMutex<Option<Creator>>,
+        pub(super) frames: AsyncMutex<Vec<GlyNewFrame>>,
     }
 
     #[glib::object_subclass]
@@ -72,6 +73,10 @@ impl GlyCreator {
         Ok(obj)
     }
 
+    pub fn inner(&self) -> &AsyncMutex<Option<crate::Creator>> {
+        &self.imp().creator
+    }
+
     pub fn cancellable(&self) -> gio::Cancellable {
         self.imp()
             .creator
@@ -114,43 +119,42 @@ impl GlyCreator {
             .set_encoding_compression(compression)
     }
 
-    pub fn add_frame(
+    pub async fn add_frame(
         &self,
         width: u32,
         height: u32,
         memory_format: MemoryFormat,
-        texture: Vec<u8>,
+        texture: glib::Bytes,
     ) -> Result<GlyNewFrame, Error> {
-        let new_frame =
-            self.creator()
-                .as_mut()
-                .unwrap()
-                .add_frame(width, height, memory_format, texture)?;
+        let frame = GlyNewFrame::new(width, height, None, memory_format, texture);
 
-        Ok(GlyNewFrame::new(new_frame))
+        self.imp().frames.lock().await.push(frame.clone());
+
+        Ok(frame)
     }
 
-    pub fn add_frame_with_stride(
+    pub async fn add_frame_with_stride(
         &self,
         width: u32,
         height: u32,
         stride: u32,
         memory_format: MemoryFormat,
-        texture: Vec<u8>,
+        texture: glib::Bytes,
     ) -> Result<GlyNewFrame, Error> {
-        let new_frame = self.creator().as_mut().unwrap().add_frame_with_stride(
-            width,
-            height,
-            stride,
-            memory_format,
-            texture,
-        )?;
+        // TODO: Check valid stride etc
+        let frame = GlyNewFrame::new(width, height, Some(stride), memory_format, texture);
 
-        Ok(GlyNewFrame::new(new_frame))
+        self.imp().frames.lock().await.push(frame.clone());
+
+        Ok(frame)
     }
 
     pub async fn create(&self) -> Result<gobject::GlyEncodedImage, crate::ErrorCtx> {
         if let Some(mut creator) = std::mem::take(&mut *self.imp().creator.lock_blocking()) {
+            for frame in &*self.imp().frames.lock().await {
+                frame.build(&mut creator).await.err_no_context()?;
+            }
+
             creator.sandbox_selector(self.sandbox_selector());
             let encoded_image: crate::EncodedImage = creator.create().await?;
             Ok(gobject::GlyEncodedImage::new(encoded_image))

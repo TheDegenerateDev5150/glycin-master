@@ -31,7 +31,7 @@ pub struct Creator {
 
 static_assertions::assert_impl_all!(Creator: Send, Sync);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FeatureNotSupported;
 
 impl std::fmt::Display for FeatureNotSupported {

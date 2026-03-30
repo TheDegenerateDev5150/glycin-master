@@ -1,21 +1,36 @@
-use std::sync::Arc;
-
 use gio::glib;
+use glib::prelude::*;
 use glib::subclass::prelude::*;
+use glycin_utils::MemoryFormat;
+
+use std::sync::OnceLock;
+
+use super::init;
 
 static_assertions::assert_impl_all!(GlyNewFrame: Send, Sync);
 
-use super::init;
-use crate::NewFrame;
-
 pub mod imp {
-    use std::sync::OnceLock;
+
+    use std::sync::Mutex;
 
     use super::*;
 
-    #[derive(Debug, Default)]
+    #[derive(Debug, Default, glib::Properties)]
+    #[properties(wrapper_type = super::GlyNewFrame)]
     pub struct GlyNewFrame {
-        pub(super) new_frame: OnceLock<Arc<NewFrame>>,
+        #[property(get, construct_only)]
+        width: OnceLock<u32>,
+        #[property(get, construct_only)]
+        height: OnceLock<u32>,
+        #[property(get, construct_only)]
+        stride: OnceLock<u32>,
+        #[property(get, construct_only, builder(MemoryFormat::R8g8b8))]
+        memory_format: OnceLock<MemoryFormat>,
+        #[property(get, construct_only)]
+        texture: OnceLock<glib::Bytes>,
+
+        #[property(get, set, nullable)]
+        color_icc_profile: Mutex<Option<glib::Bytes>>,
     }
 
     #[glib::object_subclass]
@@ -24,6 +39,7 @@ pub mod imp {
         type Type = super::GlyNewFrame;
     }
 
+    #[glib::derived_properties]
     impl ObjectImpl for GlyNewFrame {
         fn constructed(&self) {
             self.parent_constructed();
@@ -39,15 +55,32 @@ glib::wrapper! {
 }
 
 impl GlyNewFrame {
-    pub fn new(new_frame: Arc<NewFrame>) -> Self {
-        let obj = glib::Object::new::<Self>();
-
-        obj.imp().new_frame.set(new_frame).unwrap();
-
-        obj
+    pub fn new(
+        width: u32,
+        height: u32,
+        stride: Option<u32>,
+        memory_format: MemoryFormat,
+        texture: glib::Bytes,
+    ) -> Self {
+        glib::Object::builder()
+            .property("width", width)
+            .property("height", height)
+            .property("stride", stride.unwrap_or_default())
+            .property("memory-format", memory_format)
+            .property("texture", texture)
+            .build()
     }
 
-    pub fn new_frame(&self) -> Arc<NewFrame> {
-        self.imp().new_frame.get().unwrap().clone()
+    pub async fn build(&self, creator: &mut crate::Creator) -> Result<(), crate::Error> {
+        let frame = creator.add_frame(
+            self.width(),
+            self.height(),
+            self.memory_format(),
+            self.texture().into_data().to_vec(),
+        )?;
+
+        frame.set_color_icc_profile(self.color_icc_profile().map(|x| x.into_data().to_vec()))?;
+
+        Ok(())
     }
 }
