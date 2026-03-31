@@ -226,6 +226,7 @@ impl SharedMemory {
                 Ok(_) => break,
                 Err(err) if start.elapsed() > std::time::Duration::from_secs(10) => {
                     // Give up after some time and return the error
+                    std::mem::forget(mfd);
                     return Err(err);
                 }
                 Err(_) => {
@@ -243,6 +244,7 @@ impl SharedMemory {
 impl Deref for SharedMemory {
     type Target = [u8];
 
+    #[inline]
     fn deref(&self) -> &[u8] {
         self.mmap
             .as_ref()
@@ -251,6 +253,7 @@ impl Deref for SharedMemory {
 }
 
 impl DerefMut for SharedMemory {
+    #[inline]
     fn deref_mut(&mut self) -> &mut [u8] {
         self.mmap
             .as_mut()

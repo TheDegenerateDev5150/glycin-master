@@ -1,5 +1,7 @@
 use std::any::Any;
 
+use crate::MemoryAllocationError;
+
 #[derive(zbus::DBusError, Debug, Clone)]
 #[zbus(prefix = "org.gnome.glycin.Error")]
 #[non_exhaustive]
@@ -18,6 +20,7 @@ pub enum RemoteError {
     OutOfMemory(String),
     Aborted,
     NoMoreFrames,
+    MemoryAllocationError(String),
 }
 
 type Location = std::panic::Location<'static>;
@@ -88,6 +91,12 @@ impl From<DimensionTooLargerError> for ProcessError {
     fn from(err: DimensionTooLargerError) -> Self {
         eprintln!("Decoding error: {err:?}");
         Self::ConversionTooLargerError
+    }
+}
+
+impl From<MemoryAllocationError> for RemoteError {
+    fn from(err: MemoryAllocationError) -> Self {
+        Self::MemoryAllocationError(err.to_string())
     }
 }
 

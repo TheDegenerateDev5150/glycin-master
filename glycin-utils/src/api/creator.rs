@@ -38,11 +38,19 @@ impl<B: ByteData> NewImage<B> {
     }
 
     pub async fn initial_seal(&mut self) -> Result<(), MemoryAllocationError> {
-        self.image_info.initial_seal().await
+        self.image_info.initial_seal().await?;
+        for frame in &mut self.frames {
+            frame.initial_seal().await?;
+        }
+        Ok(())
     }
 
     pub async fn final_seal(&mut self) -> Result<(), MemoryAllocationError> {
-        self.image_info.final_seal().await
+        self.image_info.final_seal().await?;
+        for frame in &mut self.frames {
+            frame.final_seal().await?;
+        }
+        Ok(())
     }
 }
 

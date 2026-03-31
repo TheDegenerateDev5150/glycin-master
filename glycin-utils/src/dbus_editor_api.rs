@@ -10,8 +10,8 @@ use futures_util::FutureExt;
 use glycin_common::Operations;
 use zbus::zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type};
 
-use crate::error::*;
 use crate::{ByteData, SharedMemory, api};
+use crate::{MemoryAllocationError, error::*};
 
 #[derive(DeserializeDict, SerializeDict, Type, Debug)]
 #[zvariant(signature = "dict")]
@@ -37,6 +37,11 @@ impl EditRequest {
 
         Ok(operations)
     }
+
+    #[cfg(feature = "external")]
+    pub async fn initial_seal(&mut self) -> Result<(), MemoryAllocationError> {
+        self.operations.initial_seal().await
+    }
 }
 
 pub struct Editor<E: api::EditorImplementation> {
@@ -50,9 +55,10 @@ impl<E: api::EditorImplementation> Editor<E> {
     async fn create(
         &self,
         mime_type: String,
-        new_image: api::NewImage<SharedMemory>,
+        mut new_image: api::NewImage<SharedMemory>,
         encoding_options: api::EncodingOptions,
     ) -> Result<api::EncodedImage<SharedMemory>, RemoteError> {
+        new_image.initial_seal().await?;
         E::create(mime_type, new_image, encoding_options).map_err(|x| x.into_editor_error())
     }
 
@@ -113,8 +119,9 @@ pub struct EditableImage<E: api::EditorImplementation> {
 impl<E: api::EditorImplementation> EditableImage<E> {
     async fn apply_sparse(
         &self,
-        edit_request: EditRequest,
+        mut edit_request: EditRequest,
     ) -> Result<api::SparseEditorOutput<SharedMemory>, RemoteError> {
+        edit_request.initial_seal().await?;
         let operations = edit_request.operations()?;
 
         let editor_implementation = self.editor_implementation.clone();
@@ -134,8 +141,9 @@ impl<E: api::EditorImplementation> EditableImage<E> {
     /// Same as [`Self::apply()`] but without potential to return sparse changes
     async fn apply_complete(
         &self,
-        edit_request: EditRequest,
+        mut edit_request: EditRequest,
     ) -> Result<api::CompleteEditorOutput<SharedMemory>, RemoteError> {
+        edit_request.initial_seal().await?;
         let operations = edit_request.operations()?;
 
         let editor_implementation = self.editor_implementation.clone();
