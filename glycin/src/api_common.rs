@@ -454,10 +454,17 @@ pub trait ProvidesMainContext {
                     let main_context = glib::MainContext::new();
                     let main_loop = glib::MainLoop::new(Some(&main_context), true);
 
+                    #[cfg(feature = "tokio")]
+                    let hdl = tokio::runtime::Handle::current();
+
                     std::thread::spawn(glib::clone!(
                         #[strong]
                         main_context,
-                        move || main_context.with_thread_default(|| main_loop.run())
+                        move || {
+                            #[cfg(feature = "tokio")]
+                            let _hdl = hdl.enter();
+                            main_context.with_thread_default(|| main_loop.run())
+                        }
                     ));
 
                     main_context

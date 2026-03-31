@@ -55,9 +55,21 @@
 #[cfg(all(not(feature = "async-io"), not(feature = "tokio")))]
 mod error_message {
     compile_error!(
-        "\"async-io\" (default) or \"tokio\" must be enabled to provide an async runtime."
+        "Feature 'async-io' (default) or 'tokio' must be enabled to provide an async runtime."
     );
 }
+
+#[cfg(all(not(feature = "external"), not(feature = "builtin")))]
+mod error_message {
+    compile_error!(
+        "Feature 'external' or 'builtin' must be enabled to provide a way to load images."
+    );
+}
+
+#[cfg(all(feature = "builtin", not(any(feature = "builtin-image-rs"))))]
+compile_error!(
+    "At least one builtin loader feature like 'builtin-image-rs' has to be enabled if 'builtin' is enabled."
+);
 
 mod api_common;
 
@@ -107,8 +119,3 @@ pub use pool::{Pool, PoolConfig};
 use pool_shim as pool;
 #[cfg(feature = "gdk4")]
 pub use util::gdk_memory_format;
-
-#[cfg(all(feature = "builtin", not(any(feature = "builtin-image-rs"))))]
-compile_error!(
-    "At least one builtin loader feature like 'builtin-image-rs' has to be enabled if 'builtin' is enabled."
-);

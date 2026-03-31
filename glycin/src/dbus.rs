@@ -241,9 +241,9 @@ impl<P: DBusProxy> RemoteProcess<P> {
     fn init_request(
         &self,
         mime_type: &MimeType,
-        external_reader: UnixStream,
+        external_reader: OwnedFd,
     ) -> Result<InitRequest, Error> {
-        let fd = zvariant::OwnedFd::from(OwnedFd::from(external_reader));
+        let fd = zvariant::OwnedFd::from(external_reader);
 
         let mime_type = mime_type.to_string();
 
@@ -262,7 +262,7 @@ impl RemoteProcess<LoaderProxy<'static>> {
     pub async fn init(
         &self,
         mime_type: &MimeType,
-        external_reader: UnixStream,
+        external_reader: OwnedFd,
     ) -> Result<RemoteImage<SharedMemory>, Error> {
         let init_request = self.init_request(mime_type, external_reader)?;
 
@@ -313,10 +313,10 @@ impl RemoteProcess<EditorProxy<'static>> {
 
     pub async fn edit(
         &self,
-        unix_stream: UnixStream,
+        external_reader: OwnedFd,
         mime_type: &MimeType,
     ) -> Result<RemoteEditableImage, Error> {
-        let init_request = self.init_request(mime_type, unix_stream)?;
+        let init_request = self.init_request(mime_type, external_reader)?;
 
         self.proxy.edit(init_request).await.map_err(Into::into)
     }

@@ -1,5 +1,5 @@
 #[cfg(feature = "external")]
-use std::os::unix::net::UnixStream;
+use std::os::fd::OwnedFd;
 
 #[cfg(feature = "builtin")]
 use futures_util::SinkExt;
@@ -63,10 +63,8 @@ impl SourceTransmission {
     #[cfg(feature = "external")]
     pub fn spawn_external(
         self,
-    ) -> Result<(UnixStream, impl Future<Output = Result<(), Error>>), Error> {
-        let (external_reader, writer) = std::os::unix::net::UnixStream::pair()?;
-
-        let writer = async_io::Async::new(writer)?;
+    ) -> Result<(OwnedFd, impl Future<Output = Result<(), Error>>), Error> {
+        let (external_reader, writer) = util::pair()?;
 
         Ok((external_reader, self.spawn_with_stream(writer)))
     }

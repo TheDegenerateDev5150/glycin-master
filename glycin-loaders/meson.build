@@ -205,7 +205,7 @@ if get_option('tests')
         'test',
         '-p', 'tests',
         '--no-default-features',
-        '--features', 'tokio',
+        '--features', 'tokio,external-loaders',
         # Not using a separate target dir causes rebuilds for the loaders
         '--target-dir', cargo_target_dir / 'tests',
         cargo_options,
