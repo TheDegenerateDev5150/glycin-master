@@ -73,7 +73,6 @@ impl Default for FrameRequest {
 /// This is returned from the initial `InitRequest` call
 #[derive(Debug)]
 #[cfg_attr(feature = "external", derive(Type, Serialize, Deserialize))]
-#[cfg_attr(feature = "external", zvariant(signature = "dict"))]
 #[cfg_attr(
     feature = "external",
     serde(bound(
@@ -280,8 +279,7 @@ impl<B: ByteData> Default for FrameDetails<B> {
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "external", derive(Type, Serialize, Deserialize))]
-#[cfg_attr(feature = "external", zvariant(signature = "dict"))]
+#[cfg_attr(feature = "external", derive(Serialize, Deserialize))]
 #[cfg_attr(
     feature = "external",
     serde(bound(
@@ -301,6 +299,19 @@ pub struct Frame<B: ByteData> {
     /// If the value is not set, the image is not animated.
     pub delay: Optional<Duration>,
     pub details: FrameDetails<B>,
+}
+
+#[cfg(feature = "external")]
+impl<B: ByteData + zvariant::Type> zvariant::Type for Frame<B> {
+    const SIGNATURE: &'static zvariant::Signature = <(
+        u32,
+        u32,
+        u32,
+        MemoryFormat,
+        B,
+        Optional<Duration>,
+        FrameDetails<B>,
+    )>::SIGNATURE;
 }
 
 impl<B: ByteData> Frame<B> {

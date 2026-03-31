@@ -1,8 +1,5 @@
 use std::ops::{Deref, DerefMut};
 
-use serde::{Deserialize, Serialize};
-use zbus::zvariant;
-
 use crate::{ByteData, MemoryAllocationError};
 
 #[derive(Debug)]
