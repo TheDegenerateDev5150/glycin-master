@@ -176,7 +176,11 @@ fn info() -> BTreeMap<String, Format> {
                 eprintln!("{type_}: {mime_type}");
 
                 let mut config = glycin::config::Config::default();
-                async_io::block_on(glycin::config::Config::load_file(&path, &mut config)).unwrap();
+                async_io::block_on(glycin::config::Config::load_config(
+                    glycin::config::ConfigLoader::File(path.clone()),
+                    &mut config,
+                ))
+                .unwrap();
                 let entry = info.entry(mime_type.to_string()).or_default();
 
                 entry.mime_type = mime_type.to_string();
