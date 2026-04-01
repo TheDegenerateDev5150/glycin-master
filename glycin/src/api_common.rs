@@ -432,7 +432,7 @@ pub(crate) async fn guess_mime_type(
 static CHECK_MAIN_CONTEXT: LazyLock<std::sync::Mutex<()>> = LazyLock::new(Default::default);
 pub trait ProvidesMainContext {
     fn main_context(&self) -> glib::MainContext {
-        if let Some(thread_context) = glib::MainContext::thread_default() {
+        let main_context = if let Some(thread_context) = glib::MainContext::thread_default() {
             tracing::debug!("Using current threads default MainContext.");
             // Current thread has a default MainContext
             thread_context
@@ -461,6 +461,7 @@ pub trait ProvidesMainContext {
                         #[strong]
                         main_context,
                         move || {
+                            // Inherit the tokio runtime for our custom thread
                             #[cfg(feature = "tokio")]
                             let _hdl = hdl.enter();
                             main_context.with_thread_default(|| main_loop.run())
@@ -472,7 +473,16 @@ pub trait ProvidesMainContext {
                 // Return global glycin MainContext
                 (*GLYCIN_MAIN_CONTEXT).clone()
             }
-        }
+        };
+
+        #[cfg(feature = "tokio")]
+        main_context.spawn_from_within(|| async {
+            if tokio::runtime::Handle::try_current().is_err() {
+                tracing::error!("Using a MainContext which doesn't have a tokio Runtime in it's MainLoop thread. This will most likely fail.");
+            }
+        });
+
+        main_context
     }
 }
 

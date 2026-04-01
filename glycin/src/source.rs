@@ -5,8 +5,7 @@ use std::os::fd::OwnedFd;
 use futures_util::SinkExt;
 use gio::prelude::*;
 
-use crate::util::AsyncWriteExt;
-use crate::{Error, Source, util};
+use crate::{Error, Source};
 
 const BUF_SIZE: usize = u16::MAX as usize;
 
@@ -41,8 +40,11 @@ impl SourceTransmission {
     }
 
     #[cfg(feature = "external")]
-    async fn spawn_with_stream(self, mut stream: util::UnixStream) -> Result<(), Error> {
-        stream.write_all(&self.first_bytes).await?;
+    async fn spawn_with_stream(self, stream: gio_unix::OutputStream) -> Result<(), Error> {
+        stream
+            .write_all_future(self.first_bytes, glib::Priority::DEFAULT)
+            .await
+            .unwrap();
 
         loop {
             let buf = vec![0; BUF_SIZE];
@@ -56,7 +58,11 @@ impl SourceTransmission {
                 return Ok(());
             }
 
-            stream.write_all(&buf[..n]).await?;
+            // TODO: Avoiding to_vec()
+            stream
+                .write_all_future(buf[..n].to_vec(), glib::Priority::DEFAULT)
+                .await
+                .unwrap();
         }
     }
 
@@ -64,9 +70,11 @@ impl SourceTransmission {
     pub fn spawn_external(
         self,
     ) -> Result<(OwnedFd, impl Future<Output = Result<(), Error>>), Error> {
-        let (external_reader, writer) = util::pair()?;
+        let (external_reader, writer) = std::os::unix::net::UnixStream::pair()?;
 
-        Ok((external_reader, self.spawn_with_stream(writer)))
+        let writer = gio_unix::OutputStream::take_fd(writer.into());
+
+        Ok((external_reader.into(), self.spawn_with_stream(writer)))
     }
 
     #[cfg(feature = "builtin")]

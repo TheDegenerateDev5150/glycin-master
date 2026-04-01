@@ -305,31 +305,3 @@ pub fn spawn_timeout(
         f.await;
     }))
 }
-
-#[cfg(not(feature = "tokio"))]
-pub use futures_lite::AsyncWriteExt;
-#[cfg(feature = "tokio")]
-pub use tokio::io::AsyncWriteExt;
-
-#[cfg(all(not(feature = "tokio"), feature = "external"))]
-pub type UnixStream = async_io::Async<std::os::unix::net::UnixStream>;
-
-#[cfg(all(not(feature = "tokio"), feature = "external"))]
-pub fn pair() -> std::io::Result<(std::os::fd::OwnedFd, UnixStream)> {
-    let (x, y) = std::os::unix::net::UnixStream::pair()?;
-
-    Ok((x.into(), async_io::Async::new(y)?))
-}
-
-#[cfg(all(feature = "tokio", feature = "external"))]
-pub use tokio::net::UnixStream;
-
-#[cfg(all(feature = "tokio", feature = "external"))]
-pub fn pair() -> std::io::Result<(std::os::fd::OwnedFd, UnixStream)> {
-    let (x, y) = std::os::unix::net::UnixStream::pair()?;
-
-    x.set_nonblocking(true);
-    y.set_nonblocking(true);
-
-    Ok((x.into(), UnixStream::from_std(y)?))
-}
