@@ -20,7 +20,10 @@ zvariant.opt-level = "z"
 resolver = "3"
 members = [
     "glycin",
+    "glycin/glycin-builtin",
+    "glycin/glycin-external",
     "glycin-common",
+    "glycin-core",
     "glycin-dev-tools",
     "glycin-loaders/*",
     "glycin-thumbnailer",
@@ -80,9 +83,12 @@ glib = { version = "0.22.0", features = ["v2_68"] }
 glib-sys = { version = "0.22.0", features = ["v2_68"] }
 gobject-sys = { version = "0.22.0", features = ["v2_68"] }
 glycin = { path = "glycin/", default-features = false }
+glycin-builtin = { version = "3.1.0", path = "glycin/glycin-builtin/", default-features = false }
+glycin-core = { path = "glycin-core/", default-features = false }
 glycin-common = { version = "1.0.4", path = "glycin-common/" }
 glycin-image-rs = { version = "2.1.0", path = "glycin-loaders/glycin-image-rs", default-features = false }
 glycin-utils = { version = "4.1.0", path = "glycin-utils/", default-features = false }
+glycin-external = { version = "3.1.0", path = "glycin/glycin-external/", default-features = false }
 gufo = { version = "0.4.1", features = ["all-image-formats"] }
 gufo-common = { version = "1.1.0", features = ["serde"] }
 gufo-exif = { version = "0.4.0" }

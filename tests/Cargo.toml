@@ -12,8 +12,9 @@ default = ["async-io", "external-loaders"]
 async-io = ["glycin/async-io", "glycin-utils/async-io"]
 tokio = ["glycin/tokio", "glycin-utils/tokio"]
 
-builtin-loaders = ["glycin/builtin-image-rs"]
-external-loaders = ["glycin/external"]
+# TODO: Fixme
+builtin-loaders = []
+external-loaders = []
 combined-loaders = ["builtin-loaders", "external-loaders"]
 
 [dev-dependencies]

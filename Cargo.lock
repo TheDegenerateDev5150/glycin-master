@@ -1018,6 +1018,39 @@ dependencies = [
 name = "glycin"
 version = "3.1.0"
 dependencies = [
+ "glycin-builtin",
+ "glycin-external",
+]
+
+[[package]]
+name = "glycin-builtin"
+version = "3.1.0"
+dependencies = [
+ "glycin-core",
+]
+
+[[package]]
+name = "glycin-common"
+version = "1.0.4"
+dependencies = [
+ "bitflags",
+ "glib",
+ "gufo-common",
+ "half",
+ "memmap2",
+ "nix",
+ "paste",
+ "rmp-serde",
+ "serde",
+ "thiserror",
+ "zerocopy",
+ "zvariant",
+]
+
+[[package]]
+name = "glycin-core"
+version = "3.1.0"
+dependencies = [
  "async-fs",
  "async-global-executor",
  "async-io",
@@ -1054,24 +1087,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "glycin-common"
-version = "1.0.4"
-dependencies = [
- "bitflags",
- "glib",
- "gufo-common",
- "half",
- "memmap2",
- "nix",
- "paste",
- "rmp-serde",
- "serde",
- "thiserror",
- "zerocopy",
- "zvariant",
-]
-
-[[package]]
 name = "glycin-dev-tools"
 version = "2.1.0"
 dependencies = [
@@ -1082,6 +1097,13 @@ dependencies = [
  "glycin-common",
  "gufo-common",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "glycin-external"
+version = "3.1.0"
+dependencies = [
+ "glycin-core",
 ]
 
 [[package]]

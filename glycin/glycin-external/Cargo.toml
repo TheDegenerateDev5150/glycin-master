@@ -1,0 +1,23 @@
+[package]
+name = "glycin-external"
+version = "3.1.0"
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+glycin-core = { workspace = true, features = ["external"] }
+
+[features]
+async-io = ["glycin-core/async-io"]
+gdk4 = ["glycin-core/gdk4"]
+gobject = ["glycin-core/gobject"]
+tests = []
+tokio = ["glycin-core/tokio"]

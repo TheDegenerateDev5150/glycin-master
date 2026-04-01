@@ -4,7 +4,7 @@
 edition = "2024"
 
 [dependencies]
-glycin = { path = "../../glycin", features = ["unstable-config"] }
+glycin = { path = "../../glycin" }
 glib = "0.21"
 gio = "0.21"
 async-io = "2.5"
