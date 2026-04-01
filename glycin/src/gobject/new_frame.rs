@@ -72,12 +72,22 @@ impl GlyNewFrame {
     }
 
     pub async fn build(&self, creator: &mut crate::Creator) -> Result<(), crate::Error> {
-        let frame = creator.add_frame(
-            self.width(),
-            self.height(),
-            self.memory_format(),
-            self.texture().into_data().to_vec(),
-        )?;
+        let frame = if self.stride() == 0 {
+            creator.add_frame(
+                self.width(),
+                self.height(),
+                self.memory_format(),
+                self.texture().into_data().to_vec(),
+            )?
+        } else {
+            creator.add_frame_with_stride(
+                self.width(),
+                self.height(),
+                self.stride(),
+                self.memory_format(),
+                self.texture().into_data().to_vec(),
+            )?
+        };
 
         frame.set_color_icc_profile(self.color_icc_profile().map(|x| x.into_data().to_vec()))?;
 

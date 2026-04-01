@@ -102,8 +102,6 @@ impl EditorImplementation for ImgEditor {
                     let _ = encoder.set_icc_profile(icc_profile);
                 }
 
-                //let frame = frame.into_other::<B>()?;
-
                 encoder
                     .write_image(&frame.texture, frame.width, frame.height, memory_format)
                     .internal_error()?;
