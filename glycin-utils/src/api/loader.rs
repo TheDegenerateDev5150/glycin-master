@@ -4,8 +4,9 @@ use std::time::Duration;
 
 use glycin_common::{MemoryFormat, MemoryFormatInfo};
 use gufo_common::orientation::Orientation;
-use serde::{Deserialize, Serialize};
+#[cfg(feature = "external")]
 use zbus::zvariant::as_value::{self, optional};
+#[cfg(feature = "external")]
 use zbus::zvariant::{self, DeserializeDict, Optional, SerializeDict, Type};
 
 use crate::error::DimensionTooLargerError;
@@ -24,7 +25,7 @@ pub trait LoaderImplementation: Send + Sync + Sized + 'static {
 }
 
 #[cfg(feature = "external")]
-#[derive(Deserialize, Serialize, Type, Debug)]
+#[derive(serde::Deserialize, serde::Serialize, Type, Debug)]
 pub struct InitRequest {
     /// Source from which the loader reads the image data
     pub fd: zvariant::OwnedFd,
@@ -32,29 +33,41 @@ pub struct InitRequest {
     pub details: InitializationDetails,
 }
 
-#[derive(DeserializeDict, SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[derive(Debug, Default)]
+#[cfg_attr(feature = "external", derive(DeserializeDict, SerializeDict, Type))]
+#[cfg_attr(feature = "external", zvariant(signature = "dict"))]
 #[non_exhaustive]
 pub struct InitializationDetails {
     pub base_dir: Option<std::path::PathBuf>,
 }
 
+#[cfg(feature = "external")]
 const fn true_const() -> bool {
     true
 }
 
-#[derive(Deserialize, Serialize, Type, Debug, Clone)]
-#[zvariant(signature = "dict")]
+#[derive(Debug, Clone)]
+#[cfg_attr(
+    feature = "external",
+    derive(serde::Deserialize, serde::Serialize, Type)
+)]
+#[cfg_attr(feature = "external", zvariant(signature = "dict"))]
 #[non_exhaustive]
 pub struct FrameRequest {
     /// Scale image to these dimensions
-    #[serde(with = "optional", skip_serializing_if = "Option::is_none", default)]
+    #[cfg_attr(
+        feature = "external",
+        serde(with = "optional", skip_serializing_if = "Option::is_none", default)
+    )]
     pub scale: Option<(u32, u32)>,
     /// Instruction to only decode part of the image
-    #[serde(with = "optional", skip_serializing_if = "Option::is_none", default)]
+    #[cfg_attr(
+        feature = "external",
+        serde(with = "optional", skip_serializing_if = "Option::is_none", default)
+    )]
     pub clip: Option<(u32, u32, u32, u32)>,
     /// Get first frame, if previously selected frame was the last one
-    #[serde(with = "as_value", default = "true_const")]
+    #[cfg_attr(feature = "external", serde(with = "as_value", default = "true_const"))]
     pub loop_animation: bool,
 }
 
@@ -71,21 +84,19 @@ impl Default for FrameRequest {
 /// Various image metadata
 ///
 /// This is returned from the initial `InitRequest` call
-#[derive(Debug)]
-#[cfg_attr(feature = "external", derive(Type, Serialize, Deserialize))]
-#[cfg_attr(
-    feature = "external",
-    serde(bound(
-        serialize = "B: ByteData + serde::Serialize + zbus::zvariant::Type + 'static",
-        deserialize = "B: ByteData + serde::de::DeserializeOwned + zbus::zvariant::Type + 'static"
-    ))
-)]
+#[cfg(feature = "external")]
+#[derive(Debug, Type, serde::Serialize, serde::Deserialize)]
+#[serde(bound(
+    serialize = "B: ByteData + serde::Serialize + zbus::zvariant::Type + 'static",
+    deserialize = "B: ByteData + serde::de::DeserializeOwned + zbus::zvariant::Type + 'static"
+))]
 #[non_exhaustive]
 pub struct RemoteImage<B: ByteData> {
     pub frame_request: zvariant::OwnedObjectPath,
     pub details: ImageDetails<B>,
 }
 
+#[cfg(feature = "external")]
 impl<B: ByteData> RemoteImage<B> {
     pub fn new(details: ImageDetails<B>, frame_request: zvariant::OwnedObjectPath) -> Self {
         Self {
@@ -104,7 +115,10 @@ impl<B: ByteData> RemoteImage<B> {
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "external", derive(Type, Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "external",
+    derive(Type, serde::Serialize, serde::Deserialize)
+)]
 #[cfg_attr(feature = "external", zvariant(signature = "dict"))]
 #[cfg_attr(
     feature = "external",
@@ -278,8 +292,11 @@ impl<B: ByteData> Default for FrameDetails<B> {
     }
 }
 
+#[cfg(not(feature = "external"))]
+pub type Optional<T> = Option<T>;
+
 #[derive(Debug)]
-#[cfg_attr(feature = "external", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "external", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "external",
     serde(bound(
@@ -388,7 +405,10 @@ impl<B: ByteData> Frame<B> {
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "external", derive(Type, Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "external",
+    derive(Type, serde::Serialize, serde::Deserialize)
+)]
 #[cfg_attr(feature = "external", zvariant(signature = "dict"))]
 #[cfg_attr(
     feature = "external",

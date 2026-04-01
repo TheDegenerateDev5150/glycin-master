@@ -362,7 +362,7 @@ impl RemoteProcess<EditorProxy<'static>> {
         let edit_request_path = image.edit_request_path();
         let arc = self.clone();
 
-        crate::util::spawn_detached(arc.done(edit_request_path));
+        util::spawn_detached(arc.done(edit_request_path));
     }
 
     pub async fn done(self: Arc<Self>, edit_request_path: OwnedObjectPath) -> Result<(), Error> {

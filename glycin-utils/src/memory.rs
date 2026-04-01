@@ -1,5 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
+#[cfg(feature = "external")]
 pub use zbus::zvariant;
 
 mod fungible;

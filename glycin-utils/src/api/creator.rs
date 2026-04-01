@@ -1,10 +1,13 @@
-use serde::{Deserialize, Serialize};
+#[cfg(feature = "external")]
 use zbus::zvariant::{DeserializeDict, SerializeDict, Type, as_value};
 
 use crate::{ByteData, FungibleMemory, MemoryAllocationError, api};
 
 #[derive(Debug)]
-#[cfg_attr(feature = "external", derive(Type, Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "external",
+    derive(Type, serde::Serialize, serde::Deserialize)
+)]
 #[cfg_attr(feature = "external", zvariant(signature = "dict"))]
 #[cfg_attr(
     feature = "external",
@@ -54,8 +57,9 @@ impl<B: ByteData> NewImage<B> {
     }
 }
 
-#[derive(DeserializeDict, SerializeDict, Type, Debug, Default)]
-#[zvariant(signature = "dict")]
+#[derive(Debug, Default)]
+#[cfg_attr(feature = "external", derive(DeserializeDict, SerializeDict, Type))]
+#[cfg_attr(feature = "external", zvariant(signature = "dict"))]
 #[non_exhaustive]
 pub struct EncodingOptions {
     pub quality: Option<u8>,
@@ -63,7 +67,10 @@ pub struct EncodingOptions {
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "external", derive(Type, Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "external",
+    derive(Type, serde::Serialize, serde::Deserialize)
+)]
 #[cfg_attr(feature = "external", zvariant(signature = "dict"))]
 #[cfg_attr(
     feature = "external",

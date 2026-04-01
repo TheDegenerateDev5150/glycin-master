@@ -30,7 +30,7 @@ memmap = { workspace = true, optional = true }
 nix = { workspace = true, features = ["fs", "signal"], optional = true }
 paste.workspace = true
 rayon.workspace = true
-serde.workspace = true
+serde = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio = { workspace = true, optional = true }
 zbus = { workspace = true, optional = true }
@@ -38,14 +38,21 @@ zerocopy.workspace = true
 
 [features]
 default = ["async-io"]
-async-io = ["zbus/async-io"]
+async-io = ["zbus?/async-io"]
 tokio = ["dep:tokio", "zbus/tokio"]
 image-rs = ["dep:image", "loader-utils"]
 loader-utils = ["dep:futures-lite"]
 gobject = ["glib"]
 glib = ["dep:glib"]
 builtin = []
-external = ["dep:libseccomp", "dep:memfd", "dep:memmap", "dep:nix", "dep:zbus"]
+external = [
+    "dep:libseccomp",
+    "dep:memfd",
+    "dep:memmap",
+    "dep:nix",
+    "dep:zbus",
+    "dep:serde",
+]
 
 [package.metadata.docs.rs]
 features = ["image-rs", "loader-utils"]

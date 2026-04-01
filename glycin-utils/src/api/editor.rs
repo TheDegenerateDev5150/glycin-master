@@ -2,9 +2,8 @@ use std::any::Any;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
 use glycin_common::Operations;
-use serde::{Deserialize, Serialize};
-use zbus::zvariant::as_value::{self};
-use zbus::zvariant::{self, DeserializeDict, SerializeDict, Type};
+#[cfg(feature = "external")]
+use zbus::zvariant::{self, DeserializeDict, SerializeDict, Type, as_value};
 
 use crate::{
     ByteData, EncodedImage, EncodingOptions, FungibleMemory, GenericContexts,
@@ -42,12 +41,14 @@ pub trait EditorImplementation: Send + Sync + Sized + 'static {
     ) -> Result<CompleteEditorOutput<B>, ProcessError>;
 }
 
+#[cfg(feature = "external")]
 /// Editable image
-#[derive(Deserialize, Serialize, Type, Debug, Clone)]
+#[derive(serde::Deserialize, serde::Serialize, Type, Debug, Clone)]
 pub struct RemoteEditableImage {
     pub edit_request: zvariant::OwnedObjectPath,
 }
 
+#[cfg(feature = "external")]
 impl RemoteEditableImage {
     pub fn new(frame_request: zvariant::OwnedObjectPath) -> Self {
         Self {
@@ -61,7 +62,10 @@ impl RemoteEditableImage {
 /// This either contains `byte_changes` or `data`, depending on whether a sparse
 /// application of the operations was possible.
 #[derive(Debug)]
-#[cfg_attr(feature = "external", derive(Type, Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "external",
+    derive(Type, serde::Serialize, serde::Deserialize)
+)]
 #[cfg_attr(feature = "external", zvariant(signature = "dict"))]
 #[cfg_attr(
     feature = "external",
@@ -138,14 +142,19 @@ impl<B: ByteData> From<CompleteEditorOutput<B>> for SparseEditorOutput<B> {
     }
 }
 
-#[derive(DeserializeDict, SerializeDict, Type, Debug, Clone)]
-#[zvariant(signature = "dict")]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "external", derive(DeserializeDict, SerializeDict, Type))]
+#[cfg_attr(feature = "external", zvariant(signature = "dict"))]
 #[non_exhaustive]
 pub struct ByteChanges {
     pub changes: Vec<ByteChange>,
 }
 
-#[derive(Deserialize, Serialize, Type, Debug, Clone)]
+#[derive(Debug, Clone)]
+#[cfg_attr(
+    feature = "external",
+    derive(serde::Deserialize, serde::Serialize, Type)
+)]
 pub struct ByteChange {
     pub offset: u64,
     pub new_value: u8,
@@ -174,7 +183,10 @@ impl ByteChanges {
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "external", derive(Type, Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "external",
+    derive(Type, serde::Serialize, serde::Deserialize)
+)]
 #[cfg_attr(feature = "external", zvariant(signature = "dict"))]
 #[cfg_attr(
     feature = "external",
@@ -235,8 +247,9 @@ impl<B: ByteData> CompleteEditorOutput<B> {
     }
 }
 
-#[derive(DeserializeDict, SerializeDict, Type, Debug, Default, Clone)]
-#[zvariant(signature = "dict")]
+#[derive(Debug, Default, Clone)]
+#[cfg_attr(feature = "external", derive(DeserializeDict, SerializeDict, Type))]
+#[cfg_attr(feature = "external", zvariant(signature = "dict"))]
 #[non_exhaustive]
 pub struct EditorOutputInfo {
     /// Operation is considered to be lossless

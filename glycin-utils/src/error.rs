@@ -1,14 +1,15 @@
-use std::any::Any;
-
 use crate::MemoryAllocationError;
+use std::{any::Any, fmt::Debug};
 
-#[derive(zbus::DBusError, Debug, Clone)]
-#[zbus(prefix = "org.gnome.glycin.Error")]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "external", derive(zbus::DBusError))]
+#[cfg_attr(feature = "external", zbus(prefix = "org.gnome.glycin.Error"))]
 #[non_exhaustive]
 /// Error within the remote process.
 ///
 /// Errors that appear within the loader or editor.
 pub enum RemoteError {
+    #[cfg(feature = "external")]
     #[zbus(error)]
     ZBus(zbus::Error),
     LoadingError(String),
@@ -22,6 +23,16 @@ pub enum RemoteError {
     NoMoreFrames,
     MemoryAllocationError(String),
 }
+
+#[cfg(not(feature = "external"))]
+impl std::fmt::Display for RemoteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(&self, f)
+    }
+}
+
+#[cfg(not(feature = "external"))]
+impl std::error::Error for RemoteError {}
 
 type Location = std::panic::Location<'static>;
 
