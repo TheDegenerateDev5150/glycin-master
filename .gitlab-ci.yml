@@ -130,7 +130,7 @@ libglycin-rebind:
     - rustup default nightly
     - eval $(./gir-rustdoc.py --branch=main pre-docs)
     - cd ../  # move back to the root
-    - cargo doc --all-features --no-deps -p libglycin-gtk4-rebind -p libglycin-rebind -p libglycin-gtk4-rebind-sys -p libglycin-rebind-sys -p glycin -p glycin-common -p glycin-common
+    - cargo doc --all-features --no-deps -p libglycin-gtk4-rebind -p libglycin-rebind -p libglycin-gtk4-rebind-sys -p libglycin-rebind-sys
     - mkdir public
     - mv target/doc public/rust
   artifacts:
