@@ -10,11 +10,14 @@ variables:
   RUST_BACKTRACE: "full"
   TARBALL_ARTIFACT_PATH: "builddir/meson-dist/${CI_PROJECT_NAME}-${CI_COMMIT_TAG}.tar.xz"
 
+.cargo_bininstall:
+  before_script:
+    - curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
 
 .install_dependencies:
   before_script:
-    - apt update
-    - apt install -y git curl meson pkg-config gobject-introspection gi-docgen valac libgirepository1.0-dev python3-gi build-essential liblcms2-dev gettext clang mold bubblewrap libseccomp-dev libfontconfig-dev
+    - apt-get update
+    - apt-get install -y git curl meson pkg-config gobject-introspection gi-docgen valac libgirepository1.0-dev python3-gi build-essential liblcms2-dev gettext clang mold bubblewrap libseccomp-dev libfontconfig-dev
     - apt-get install -y libheif-dev libheif-plugin-aomenc libheif-plugin-x265 libgtk-4-dev libcairo2-dev librsvg2-2 libjxl-dev
   artifacts:
     when: always
@@ -91,6 +94,18 @@ test-fedora43-loaders:
     - GLYCIN_TEST_SKIP_EXT=exr cargo test -p tests -- --nocapture --test-threads 1 \
       color color_exif_orientation color_iccp_pro gray_iccp icon exif fonts editing_crop_too_large_value editing_rotation_90
 
+windows:
+  image: 'registry.fedoraproject.org/fedora:44'
+  interruptible: true
+  script:
+    - dnf install -y gcc mingw64-gtk4 x86_64-w64-mingw32-gcc
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    - export PATH="/root/.cargo/bin:${PATH}"
+    - rustup target add x86_64-pc-windows-gnu
+    - export PKG_CONFIG_ALLOW_CROSS=1
+    - export PKG_CONFIG_PATH_x86_64_pc_windows_gnu=/usr/x86_64-w64-mingw32/sys-root/mingw/lib/pkgconfig/
+    - cargo build -p glycin --features gdk4 --target x86_64-pc-windows-gnu
+
 cargo-semver-checks:
   image: rust
   extends: .install_dependencies
@@ -161,7 +176,6 @@ cargo-vet:
   script:
     - cargo install cargo-vet
     - CARGO_BUILD_TARGET=x86_64-unknown-linux-gnu cargo vet
-
 
 website:
   image: rust
