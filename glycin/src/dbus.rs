@@ -4,7 +4,6 @@
 
 use std::io::Read;
 use std::os::fd::OwnedFd;
-use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

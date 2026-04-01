@@ -10,8 +10,8 @@ use futures_util::FutureExt;
 use glycin_common::Operations;
 use zbus::zvariant::{DeserializeDict, OwnedObjectPath, SerializeDict, Type};
 
-use crate::{ByteData, SharedMemory, api};
-use crate::{MemoryAllocationError, error::*};
+use crate::error::*;
+use crate::{ByteData, MemoryAllocationError, SharedMemory, api};
 
 #[derive(DeserializeDict, SerializeDict, Type, Debug)]
 #[zvariant(signature = "dict")]

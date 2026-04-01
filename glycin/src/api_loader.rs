@@ -25,7 +25,7 @@ use crate::error::ResultExt;
 #[cfg(feature = "external")]
 use crate::pool::{PooledProcess, UsageTracker};
 use crate::source::SourceTransmission;
-use crate::util::{spawn_blocking, spawn_detached};
+use crate::util::spawn_blocking;
 use crate::{Error, ErrorCtx, MAX_TEXTURE_SIZE, Pool, config, icc, orientation, util};
 
 /// Image request builder
@@ -210,7 +210,7 @@ impl Loader {
             binary_loader.process,
             move |_| {
                 tracing::debug!("Terminating loader");
-                crate::util::spawn_detached(process.use_().done(path))
+                util::spawn_detached(process.use_().done(path))
             }
         ));
 
@@ -335,7 +335,7 @@ impl Drop for Image {
             let process = image_loader.process.clone();
             let path = self.frame_request_path();
             let loader_alive = std::mem::take(&mut *image_loader.usage_tracker.lock().unwrap());
-            spawn_detached(async move {
+            util::spawn_detached(async move {
                 if let Err(err) = process.use_().done(path).await {
                     tracing::warn!("Failed to tear down loader: {err}")
                 }
@@ -774,32 +774,6 @@ fn validate_frame<B: ByteData>(frame: &glycin_utils::Frame<B>) -> Result<(), Err
     Ok(())
 }
 
-fn remove_stride_if_needed(
-    mut frame: glycin_utils::Frame<FungibleMemory>,
-) -> Result<glycin_utils::Frame<FungibleMemory>, Error> {
-    if frame.stride.srem(frame.memory_format.n_bytes().u32())? == 0 {
-        return Ok(frame);
-    }
-
-    let img_buf = &mut frame.texture;
-
-    let width = frame
-        .width
-        .try_usize()?
-        .smul(frame.memory_format.n_bytes().usize())?;
-    let stride = frame.stride.try_usize()?;
-    let mut source = vec![0; width];
-    for row in 1..frame.height.try_usize()? {
-        source.copy_from_slice(&img_buf[row.smul(stride)?..row.smul(stride)?.sadd(width)?]);
-        img_buf[row.smul(width)?..row.sadd(1)?.smul(width)?].copy_from_slice(&source);
-    }
-    frame.stride = width.try_u32()?;
-
-    //Ok(img_buf.resize(frame.n_bytes()?.i64()?)?)
-    //todo!()
-    // TODO Resize vs realloc stuff
-    Ok(frame)
-}
 impl FrameRequest {
     pub fn new() -> Self {
         let mut request = glycin_utils::FrameRequest::default();

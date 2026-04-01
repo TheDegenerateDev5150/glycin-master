@@ -153,6 +153,7 @@ impl RunEnvironment {
 }
 
 /// Returns None if not in Flatpak environment, otherwise true if development
+#[cfg(feature = "external")]
 async fn flatpak_devel() -> Option<bool> {
     let data = read("/.flatpak-info").await.ok()?;
     let bytes = glib::Bytes::from_owned(data);
@@ -178,130 +179,132 @@ pub async fn spawn_blocking<F: FnOnce() -> T + Send + 'static, T: Send + 'static
     gio::spawn_blocking(f).await.unwrap()
 }
 
-#[cfg(not(feature = "tokio"))]
-pub type Task<T> = async_task::Task<T>;
-
+#[cfg(feature = "async-io")]
+pub use async_io_utils::*;
 #[cfg(feature = "tokio")]
-pub type Task<T> = tokio::task::JoinHandle<T>;
+pub use tokio_utils::*;
 
-#[cfg(not(feature = "tokio"))]
-pub fn spawn<T: Send + 'static>(
-    f: impl std::future::Future<Output = T> + Send + 'static,
-) -> Task<T> {
-    async_global_executor::spawn(f)
-}
+#[cfg(feature = "async-io")]
+mod async_io_utils {
+    use super::*;
 
-#[cfg(feature = "tokio")]
-pub fn spawn<T: Send + 'static>(
-    f: impl std::future::Future<Output = T> + Send + 'static,
-) -> Task<T> {
-    tokio::task::spawn(f)
-}
+    #[cfg(feature = "external")]
+    pub type Task<T> = async_task::Task<T>;
 
-#[cfg(not(feature = "tokio"))]
-pub fn spawn_detached<F>(f: F)
-where
-    F: Future + Send + 'static,
-    F::Output: Send + 'static,
-{
-    async_global_executor::spawn(f).detach()
-}
+    #[cfg(feature = "external")]
+    pub fn spawn<T: Send + 'static>(
+        f: impl std::future::Future<Output = T> + Send + 'static,
+    ) -> Task<T> {
+        async_global_executor::spawn(f)
+    }
 
-#[cfg(feature = "tokio")]
-pub fn spawn_detached<F>(f: F)
-where
-    F: Future + Send + 'static,
-    F::Output: Send + 'static,
-{
-    tokio::task::spawn(f);
-}
+    #[cfg(feature = "external")]
+    pub fn spawn_detached<F>(f: F)
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        async_global_executor::spawn(f).detach()
+    }
 
-#[cfg(not(feature = "tokio"))]
-pub type AsyncMutex<T> = async_lock::Mutex<T>;
+    pub type AsyncMutex<T> = async_lock::Mutex<T>;
 
-#[cfg(not(feature = "tokio"))]
-pub const fn new_async_mutex<T>(t: T) -> AsyncMutex<T> {
-    AsyncMutex::new(t)
-}
+    pub const fn new_async_mutex<T>(t: T) -> AsyncMutex<T> {
+        AsyncMutex::new(t)
+    }
 
-#[cfg(feature = "tokio")]
-pub type AsyncMutex<T> = tokio::sync::Mutex<T>;
+    #[cfg(feature = "external")]
+    pub async fn read_dir<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<
+        impl Stream<Item = Result<PathBuf, Box<dyn std::error::Error + Sync + Send>>>,
+        Box<dyn std::error::Error + Sync + Send>,
+    > {
+        Ok(async_fs::read_dir(path)
+            .await?
+            .map(|result| result.map(|entry| entry.path()).map_err(Into::into)))
+    }
 
-#[cfg(feature = "tokio")]
-pub const fn new_async_mutex<T>(t: T) -> AsyncMutex<T> {
-    AsyncMutex::const_new(t)
-}
+    pub use async_fs::read;
 
-#[cfg(not(feature = "tokio"))]
-pub async fn read_dir<P: AsRef<Path>>(
-    path: P,
-) -> Result<
-    impl Stream<Item = Result<PathBuf, Box<dyn std::error::Error + Sync + Send>>>,
-    Box<dyn std::error::Error + Sync + Send>,
-> {
-    Ok(async_fs::read_dir(path)
-        .await?
-        .map(|result| result.map(|entry| entry.path()).map_err(Into::into)))
-}
+    #[cfg(feature = "external")]
+    pub type TimerHandle = async_global_executor::Task<()>;
 
-#[cfg(feature = "tokio")]
-pub async fn read_dir<P: AsRef<Path>>(
-    path: P,
-) -> Result<
-    impl Stream<Item = Result<PathBuf, Box<dyn std::error::Error + Sync + Send>>>,
-    Box<dyn std::error::Error + Sync + Send>,
-> {
-    let read_dir = tokio::fs::read_dir(path).await?;
-
-    Ok(tokio_stream::wrappers::ReadDirStream::new(read_dir)
-        .map(|result| result.map(|entry| entry.path()).map_err(Into::into)))
-}
-
-#[cfg(not(feature = "tokio"))]
-pub use async_fs::read;
-#[cfg(feature = "tokio")]
-pub use tokio::fs::read;
-
-#[cfg(not(feature = "tokio"))]
-pub async fn sleep(duration: std::time::Duration) {
-    futures_timer::Delay::new(duration).await
-}
-
-#[cfg(feature = "tokio")]
-pub use tokio::time::sleep;
-
-#[cfg(not(feature = "tokio"))]
-pub type TimerHandle = async_global_executor::Task<()>;
-
-#[cfg(not(feature = "tokio"))]
-pub fn spawn_timeout(
-    duration: std::time::Duration,
-    f: impl Future + Send + 'static,
-) -> TimerHandle {
-    async_global_executor::spawn(async move {
-        async_io::Timer::after(duration).await;
-        f.await;
-    })
-}
-
-#[cfg(feature = "tokio")]
-#[derive(Debug)]
-pub struct TimerHandle(tokio::task::JoinHandle<()>);
-
-#[cfg(feature = "tokio")]
-impl Drop for TimerHandle {
-    fn drop(&mut self) {
-        self.0.abort();
+    #[cfg(feature = "external")]
+    pub fn spawn_timeout(
+        duration: std::time::Duration,
+        f: impl Future + Send + 'static,
+    ) -> TimerHandle {
+        async_global_executor::spawn(async move {
+            async_io::Timer::after(duration).await;
+            f.await;
+        })
     }
 }
 
 #[cfg(feature = "tokio")]
-pub fn spawn_timeout(
-    duration: std::time::Duration,
-    f: impl Future + Send + 'static,
-) -> TimerHandle {
-    TimerHandle(tokio::task::spawn(async move {
-        tokio::time::sleep(duration).await;
-        f.await;
-    }))
+mod tokio_utils {
+    use super::*;
+
+    #[cfg(feature = "external")]
+    pub type Task<T> = tokio::task::JoinHandle<T>;
+
+    pub use tokio::fs::read;
+
+    #[cfg(feature = "external")]
+    pub fn spawn<T: Send + 'static>(
+        f: impl std::future::Future<Output = T> + Send + 'static,
+    ) -> Task<T> {
+        tokio::task::spawn(f)
+    }
+
+    #[cfg(feature = "external")]
+    pub fn spawn_detached<F>(f: F)
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        tokio::task::spawn(f);
+    }
+
+    pub type AsyncMutex<T> = tokio::sync::Mutex<T>;
+
+    pub const fn new_async_mutex<T>(t: T) -> AsyncMutex<T> {
+        AsyncMutex::const_new(t)
+    }
+
+    #[cfg(feature = "external")]
+    pub async fn read_dir<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<
+        impl Stream<Item = Result<PathBuf, Box<dyn std::error::Error + Sync + Send>>>,
+        Box<dyn std::error::Error + Sync + Send>,
+    > {
+        let read_dir = tokio::fs::read_dir(path).await?;
+
+        Ok(tokio_stream::wrappers::ReadDirStream::new(read_dir)
+            .map(|result| result.map(|entry| entry.path()).map_err(Into::into)))
+    }
+
+    #[cfg(feature = "external")]
+    #[derive(Debug)]
+    pub struct TimerHandle(tokio::task::JoinHandle<()>);
+
+    #[cfg(feature = "external")]
+    impl Drop for TimerHandle {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+
+    #[cfg(feature = "external")]
+    pub fn spawn_timeout(
+        duration: std::time::Duration,
+        f: impl Future + Send + 'static,
+    ) -> TimerHandle {
+        TimerHandle(tokio::task::spawn(async move {
+            tokio::time::sleep(duration).await;
+            f.await;
+        }))
+    }
 }

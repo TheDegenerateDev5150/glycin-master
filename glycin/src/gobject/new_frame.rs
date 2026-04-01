@@ -1,9 +1,9 @@
+use std::sync::OnceLock;
+
 use gio::glib;
 use glib::prelude::*;
 use glib::subclass::prelude::*;
 use glycin_utils::MemoryFormat;
-
-use std::sync::OnceLock;
 
 use super::init;
 

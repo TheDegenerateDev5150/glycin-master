@@ -10,7 +10,7 @@ use futures_util::StreamExt;
 use gio::glib;
 use glycin_common::OperationId;
 
-use crate::util::{AsyncMutex, new_async_mutex, read, read_dir};
+use crate::util::{self, AsyncMutex, new_async_mutex, read};
 use crate::{Error, SandboxMechanism};
 
 #[derive(Clone, Debug)]
@@ -300,7 +300,7 @@ impl Config {
             data_dir.push(format!("{COMPAT_VERSION}+"));
             data_dir.push("conf.d");
 
-            if let Ok(mut config_files) = read_dir(data_dir).await {
+            if let Ok(mut config_files) = util::read_dir(data_dir).await {
                 while let Some(result) = config_files.next().await {
                     if let Ok(path) = result
                         && path.extension() == Some(OsStr::new(CONFIG_FILE_EXT))

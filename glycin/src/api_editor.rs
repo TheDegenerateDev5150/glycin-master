@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[cfg(feature = "builtin")]
 use futures_util::FutureExt;
@@ -21,8 +21,8 @@ use crate::dbus::EditorProxy;
 use crate::error::ResultExt;
 #[cfg(feature = "external")]
 use crate::pool::PooledProcess;
-use crate::util::{CancellableFuture, ShortcutErrorFuture, spawn_detached};
-use crate::{Error, ErrorCtx, MimeType, Pool, config, util};
+use crate::util::{self, CancellableFuture, ShortcutErrorFuture};
+use crate::{Error, ErrorCtx, MimeType, Pool, config};
 
 /// Image edit builder
 #[derive(Debug)]
@@ -97,7 +97,7 @@ impl Editor {
                     editable_image.edit_request,
                     move |_| {
                         tracing::debug!("Terminating loader");
-                        crate::util::spawn_detached(process.use_().done(path))
+                        util::spawn_detached(process.use_().done(path))
                     }
                 ));
 
@@ -180,7 +180,7 @@ impl Drop for EditableImage {
         if let ImageEditor::External(editor) = &self.image_editor {
             editor.process.use_().done_background(self);
             *editor.editor_alive.lock().unwrap() = Arc::new(());
-            spawn_detached(self.editor.pool.clone().clean_loaders());
+            util::spawn_detached(self.editor.pool.clone().clean_loaders());
         }
     }
 }
@@ -310,7 +310,7 @@ struct ImageEditorExternal {
     pub(crate) process: Arc<PooledProcess<EditorProxy<'static>>>,
     edit_request: OwnedObjectPath,
     _active_sandbox_mechanism: SandboxMechanism,
-    editor_alive: Mutex<Arc<()>>,
+    editor_alive: std::sync::Mutex<Arc<()>>,
 }
 
 #[cfg(feature = "builtin")]
