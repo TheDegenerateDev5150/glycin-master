@@ -28,7 +28,7 @@ pub fn worker(format: ImageRsFormat<Reader>, data: Reader, mime_type: String, se
         }
 
         let frame_details = match format.as_mut().unwrap().frame_details::<LocalMemory>() {
-            Ok(frame_details) => Some(frame_details),
+            Ok(frame_details) => frame_details,
             Err(err) => {
                 send.send(Err(err)).unwrap();
                 return;
@@ -60,27 +60,24 @@ pub fn worker(format: ImageRsFormat<Reader>, data: Reader, mime_type: String, se
             _ => true,
         };
 
-        // TODO: something seems very wrong with frame details here
-        for frame in first_frames.into_iter().chain(frames).enumerate() {
+        if is_animated {
+            for frame in first_frames.into_iter().chain(frames).enumerate() {
+                let decoded_frame = animated_get_frame(frame, None, is_animated);
+                send.send(decoded_frame.map(|x| (x, looped))).unwrap();
+            }
+        } else {
             // Only use FrameDetails for still images because they might not make too much
             // sense otherwise
-            let frame_details = (!is_animated).then(|| {
-                let mut new_frame_details = FrameDetails::default();
-                //new_frame_details.info_alpha_channel = frame_details.info_alpha_channel;
-                new_frame_details
-            });
-
-            let decoded_frame = animated_get_frame(frame, frame_details, is_animated);
+            let frame = first_frames.pop().unwrap();
+            let decoded_frame = animated_get_frame((0, frame), Some(frame_details), is_animated);
             send.send(decoded_frame.map(|x| (x, looped))).unwrap();
 
+            log::debug!("animated: Image is actually not animated");
             // If not really an animation no need to keep the thread around
-            if !is_animated {
-                log::debug!("animated: Image is actually not animated");
-                return;
-            }
-
-            std::thread::park();
+            return;
         }
+
+        std::thread::park();
 
         looped = true;
     }
