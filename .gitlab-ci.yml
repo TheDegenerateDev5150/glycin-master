@@ -102,7 +102,10 @@ cargo-semver-checks:
     - meson setup -Dprofile=dev -Dglycin-loaders=false -Dglycin-thumbnailer=false --prefix=/usr builddir
     - meson install -C builddir
     - cargo install cargo-semver-checks --locked
-    - cargo semver-checks -p glycin -p glycin-utils
+    - cargo semver-checks --only-explicit-features --features async-io -p glycin
+    - cargo semver-checks --only-explicit-features --features tokio -p glycin
+    - cargo semver-checks --only-explicit-features --features async-io -p glycin-utils
+    - cargo semver-checks --only-explicit-features --features tokio -p glycin-utils
     # Use the commit where we changed to defining all functions as unsafe
     - cargo semver-checks -p libglycin -p libglycin-gtk4 --baseline-rev 97b80be3
 
