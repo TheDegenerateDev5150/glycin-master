@@ -1,6 +1,6 @@
 // SPDX-Copyright: 2024 Hubert Figuière
 
-use std::io::{Cursor, Read};
+use std::io::Read;
 
 use glycin_utils::safe_math::SafeConversion;
 use glycin_utils::*;
