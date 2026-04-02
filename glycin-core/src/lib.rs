@@ -8,7 +8,7 @@
 //! You need to enable the `gdk4` feature for this example to work.
 //!
 //! ```no_run
-//! # use glycin::*;
+//! # use glycin_core::*;
 //! # async {
 //! let file = gio::File::for_path("image.jpg");
 //! let image = Loader::new(file).load().await?;

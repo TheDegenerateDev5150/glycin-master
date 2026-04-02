@@ -710,6 +710,7 @@ impl Sandbox {
             processor: Processor::Binary(PathBuf::from("/usr/bin/true")),
             expose_base_dir: false,
             fontconfig: false,
+            identifiers: Vec::new(),
         });
 
         let (dbus_socket, _) = UnixStream::pair()?;

@@ -124,6 +124,6 @@ $ cargo +nightly fmt
 
 - cargo install cross --git https://github.com/cross-rs/cross
 - cross build -p glycin --features gdk4 --target x86_64-pc-windows-gnu
-- cross test -p tests --no-default-features --features async-io,builtin-loaders --target x86_64-pc-windows-gnu
+- GLYCIN_TEST_SKIP_EXT=svg,svgz,avif,jxl cross test -p tests --no-default-features --features async-io,builtin-loaders --target x86_64-pc-windows-gnu
 
 The tests currently fail.

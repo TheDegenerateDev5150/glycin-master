@@ -1,6 +1,6 @@
 #[cfg(feature = "builtin")]
 use std::marker::PhantomData;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
 #[cfg(feature = "gobject")]
@@ -161,6 +161,11 @@ pub(crate) struct ProcessorContext<T: GetConfig, S> {
 pub trait GetConfig {
     fn config_entry<'a>(config: &'a Config, mime_type: &'a MimeType) -> Result<&'a Self, Error>;
     fn expose_base_dir(&self) -> bool;
+    fn guess_mime_type<'a>(
+        config: &'a Config,
+        path: Option<&Path>,
+        head: &[u8],
+    ) -> Option<MimeType>;
 }
 
 impl GetConfig for ImageLoaderConfig {
@@ -174,6 +179,35 @@ impl GetConfig for ImageLoaderConfig {
     fn expose_base_dir(&self) -> bool {
         self.expose_base_dir
     }
+    fn guess_mime_type<'a>(
+        config: &'a Config,
+        path: Option<&Path>,
+        head: &[u8],
+    ) -> Option<MimeType> {
+        let mut complexities = config
+            .image_loader
+            .values()
+            .map(|x| x.identifiers.iter().map(|x| x.complexity()))
+            .flatten()
+            .collect::<Vec<_>>();
+
+        complexities.sort();
+
+        for complexity in complexities.into_iter().rev() {
+            let find = config.image_loader.iter().find(|(_, x)| {
+                x.identifiers
+                    .iter()
+                    .find(|x| x.complexity() == complexity && x.matches(path, head))
+                    .is_some()
+            });
+
+            if let Some((mime_type, _)) = find {
+                return Some(mime_type.clone());
+            }
+        }
+
+        None
+    }
 }
 
 impl GetConfig for ImageEditorConfig {
@@ -186,6 +220,15 @@ impl GetConfig for ImageEditorConfig {
 
     fn expose_base_dir(&self) -> bool {
         self.expose_base_dir
+    }
+
+    fn guess_mime_type<'a>(
+        _config: &'a Config,
+        _path: Option<&Path>,
+        _head: &[u8],
+    ) -> Option<MimeType> {
+        // TODO
+        None
     }
 }
 
@@ -202,14 +245,24 @@ impl<T: GetConfig + Clone> ProcessorContext<T, SourceTransmission> {
         let file = source.file();
 
         let source_transmission = SourceTransmission::init(source).await?;
-
-        let mime_type = guess_mime_type(
-            source_transmission.file(),
-            source_transmission.first_bytes(),
-        )
-        .await?;
-
         let config = config::Config::cached().await;
+
+        let mime_type = T::guess_mime_type(
+            &config,
+            source_transmission.file().and_then(|x| x.path()).as_deref(),
+            source_transmission.first_bytes(),
+        );
+
+        let mime_type = if let Some(mime_type) = mime_type {
+            mime_type
+        } else {
+            guess_mime_type(
+                source_transmission.file(),
+                source_transmission.first_bytes(),
+            )
+            .await?
+        };
+
         let config_entry = T::config_entry(&config, &mime_type)?.clone();
 
         let base_dir = if use_expose_base_dir && config_entry.expose_base_dir() {

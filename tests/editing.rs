@@ -1,5 +1,6 @@
-use glycin_core as glycin;
 use std::path::{Path, PathBuf};
+
+use glycin_core as glycin;
 
 mod utils;
 

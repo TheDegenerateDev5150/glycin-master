@@ -1,8 +1,7 @@
-use glycin_core as glycin;
-
 use std::path::Path;
 
 use gio::prelude::FileExt;
+use glycin_core as glycin;
 use utils::*;
 
 mod utils;

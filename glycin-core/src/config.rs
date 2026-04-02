@@ -1,3 +1,5 @@
+mod indentifier;
+
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 #[cfg(feature = "external")]
@@ -10,6 +12,7 @@ use futures_util::StreamExt;
 use gio::glib;
 use glycin_common::OperationId;
 
+use crate::config::indentifier::Identifier;
 use crate::util::{self, AsyncMutex, new_async_mutex, read};
 use crate::{Error, SandboxMechanism};
 
@@ -129,6 +132,7 @@ pub enum ConfigEntry {
 #[derive(Debug, Clone)]
 pub struct ImageLoaderConfig {
     pub processor: Processor,
+    pub identifiers: Vec<Identifier>,
     pub expose_base_dir: bool,
     pub fontconfig: bool,
 }
@@ -366,6 +370,19 @@ impl Config {
                                 }
                             };
 
+                            let identifiers = keyfile
+                                .string_list(group, "Identifiers")
+                                .unwrap_or_default()
+                                .iter()
+                                .filter_map(|x| match Identifier::parse(x) {
+                                    Err(err) => {
+                                        tracing::warn!("{mime_type}: Invalid identifier: {err}");
+                                        None
+                                    }
+                                    Ok(x) => Some(x),
+                                })
+                                .collect();
+
                             let expose_base_dir =
                                 keyfile.boolean(group, "ExposeBaseDir").unwrap_or_default();
                             let fontconfig =
@@ -375,6 +392,7 @@ impl Config {
                                 processor,
                                 expose_base_dir,
                                 fontconfig,
+                                identifiers,
                             };
 
                             config.image_loader.insert(mime_type, cfg);

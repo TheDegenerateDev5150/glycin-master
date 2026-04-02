@@ -219,8 +219,9 @@ impl SharedMemory {
 
         let mfd = memfd::Memfd::try_from_fd(raw_fd)
             .map_err(|err| MemoryAllocationError(err.to_string()))?;
-        // Sealing returns a ResourceBusy for SealWrite until no readable maps exist anymore.
-        // Practically, we are waiting for the loader to close it's mmap to the memfd.
+        // Sealing returns a ResourceBusy for SealWrite until no readable maps exist
+        // anymore. Practically, we are waiting for the loader to close it's
+        // mmap to the memfd.
         loop {
             // 🦭
             let seal = mfd.add_seals(seals);

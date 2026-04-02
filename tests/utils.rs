@@ -1,11 +1,10 @@
 #![allow(dead_code)]
 
-use glycin_core as glycin;
-
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use gdk::prelude::*;
+use glycin_core as glycin;
 use tracing_subscriber::prelude::*;
 
 pub fn init() {

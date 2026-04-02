@@ -9,5 +9,7 @@ RUN rustup target add x86_64-pc-windows-gnu
 ENV PKG_CONFIG_ALLOW_CROSS=1
 ENV PKG_CONFIG_PATH_x86_64_pc_windows_gnu=/usr/x86_64-w64-mingw32/sys-root/mingw/lib/pkgconfig/
 
-ENV WINEPATH="Z:\\usr\\x86_64-w64-mingw32\\sys-root\\mingw\\bin"
+RUN dnf install -y wine-core wine-desktop
+
 ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER="wine"
+ENV WINEPATH="Z:\\usr\\x86_64-w64-mingw32\\sys-root\\mingw\\bin"

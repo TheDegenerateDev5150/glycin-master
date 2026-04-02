@@ -10,8 +10,9 @@ fn dbus_api_stability() {
 
 #[cfg(feature = "external-loaders")]
 mod abi_stability {
-    use glycin_core as glycin;
     use std::io::Read;
+
+    use glycin_core as glycin;
 
     pub fn check_api_stability(interface_name: &str) {
         let output = std::process::Command::new("busctl")

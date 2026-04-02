@@ -1,5 +1,4 @@
 use glycin_core as glycin;
-
 use glycin_utils::MemoryFormatSelection;
 use utils::*;
 

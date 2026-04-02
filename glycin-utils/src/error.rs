@@ -1,5 +1,7 @@
+use std::any::Any;
+use std::fmt::Debug;
+
 use crate::MemoryAllocationError;
-use std::{any::Any, fmt::Debug};
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "external", derive(zbus::DBusError))]
