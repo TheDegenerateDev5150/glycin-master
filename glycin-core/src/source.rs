@@ -41,10 +41,15 @@ impl SourceTransmission {
 
     #[cfg(feature = "external")]
     async fn spawn_with_stream(self, stream: gio_unix::OutputStream) -> Result<(), Error> {
-        stream
+        let res = stream
             .write_all_future(self.first_bytes, glib::Priority::DEFAULT)
-            .await
-            .unwrap();
+            .await;
+
+        match res {
+            Err((_, err)) => return Err(err.into()),
+            Ok((_, _, Some(err))) => return Err(err.into()),
+            Ok(_) => {}
+        }
 
         loop {
             let buf = vec![0; BUF_SIZE];
@@ -59,10 +64,15 @@ impl SourceTransmission {
             }
 
             // TODO: Avoiding to_vec()
-            stream
+            let res = stream
                 .write_all_future(buf[..n].to_vec(), glib::Priority::DEFAULT)
-                .await
-                .unwrap();
+                .await;
+
+            match res {
+                Err((_, err)) => return Err(err.into()),
+                Ok((_, _, Some(err))) => return Err(err.into()),
+                Ok(_) => {}
+            }
         }
     }
 

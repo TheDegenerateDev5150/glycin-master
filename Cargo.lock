@@ -2551,7 +2551,7 @@ dependencies = [
  "blocking",
  "gdk4",
  "gio",
- "glycin",
+ "glycin-core",
  "glycin-utils",
  "gufo-common",
  "serde_yaml_ng",

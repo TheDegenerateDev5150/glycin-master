@@ -113,7 +113,6 @@ impl std::fmt::Display for MimeType {
 }
 
 const CONFIG_FILE_EXT: &str = "conf";
-pub const COMPAT_VERSION: u8 = 2;
 
 #[derive(Debug, Clone, Default)]
 pub struct Config {
@@ -297,7 +296,7 @@ impl Config {
         #[cfg(feature = "external")]
         for mut data_dir in Self::data_dirs() {
             data_dir.push("glycin-loaders");
-            data_dir.push(format!("{COMPAT_VERSION}+"));
+            data_dir.push(format!("{}+", crate::COMPAT_VERSION));
             data_dir.push("conf.d");
 
             if let Ok(mut config_files) = util::read_dir(data_dir).await {

@@ -173,12 +173,13 @@ impl ByteChanges {
         }
     }
 
-    pub fn apply(&self, data: &mut [u8]) {
+    pub fn apply(&self, data: &mut [u8]) -> std::io::Result<()> {
         let mut cur = Cursor::new(data);
         for change in self.changes.iter() {
-            cur.seek(SeekFrom::Start(change.offset)).unwrap();
-            cur.write_all(&[change.new_value]).unwrap();
+            cur.seek(SeekFrom::Start(change.offset))?;
+            cur.write_all(&[change.new_value])?;
         }
+        Ok(())
     }
 }
 

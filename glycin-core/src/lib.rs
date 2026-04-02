@@ -113,11 +113,12 @@ pub mod gobject;
 /// Max texture size 8 GB in bytes
 pub(crate) const MAX_TEXTURE_SIZE: u64 = 8 * 10u64.pow(9);
 
+pub const COMPAT_VERSION: u8 = 2;
+
 pub use api_common::*;
 pub use api_creator::*;
 pub use api_editor::*;
 pub use api_loader::*;
-pub use config::COMPAT_VERSION;
 #[cfg(not(feature = "external"))]
 use dbus_shim as dbus;
 pub use error::{Error, ErrorContext, ErrorCtx};

@@ -39,7 +39,7 @@ zerocopy.workspace = true
 [features]
 default = ["async-io"]
 async-io = ["zbus?/async-io"]
-tokio = ["dep:tokio", "zbus/tokio"]
+tokio = ["dep:tokio", "zbus?/tokio"]
 image-rs = ["dep:image", "loader-utils"]
 loader-utils = ["dep:futures-lite"]
 gobject = ["glib"]

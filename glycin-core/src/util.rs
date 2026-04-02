@@ -176,6 +176,7 @@ async fn flatpak_devel() -> Option<bool> {
 }
 
 pub async fn spawn_blocking<F: FnOnce() -> T + Send + 'static, T: Send + 'static>(f: F) -> T {
+    // TODO: Check if more panic handlings do make sense here
     gio::spawn_blocking(f).await.unwrap()
 }
 

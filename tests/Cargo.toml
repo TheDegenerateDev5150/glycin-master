@@ -9,18 +9,17 @@ rust-version.workspace = true
 
 [features]
 default = ["async-io", "external-loaders"]
-async-io = ["glycin/async-io", "glycin-utils/async-io"]
-tokio = ["glycin/tokio", "glycin-utils/tokio"]
+async-io = ["glycin-core/async-io", "glycin-utils/async-io", "zbus/async-io"]
+tokio = ["glycin-core/tokio", "glycin-utils/tokio", "zbus/tokio"]
 
-# TODO: Fixme
-builtin-loaders = []
-external-loaders = []
+external-loaders = ["glycin-core/external"]
+builtin-loaders = ["glycin-core/builtin-image-rs"]
 combined-loaders = ["builtin-loaders", "external-loaders"]
 
 [dev-dependencies]
 async-io.workspace = true
 blocking.workspace = true
-glycin = { workspace = true, features = ["gdk4"] }
+glycin-core = { workspace = true, features = ["gdk4"] }
 glycin-utils = { workspace = true, features = ["loader-utils"] }
 gio.workspace = true
 tokio.workspace = true

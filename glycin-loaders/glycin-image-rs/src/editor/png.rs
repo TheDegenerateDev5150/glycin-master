@@ -73,14 +73,14 @@ pub fn apply<B: ByteData>(
     // one
     old_png.replace_image_data(&new_png).expected_error()?;
 
-    let raw_data = reset_exif_orientation(old_png);
+    let raw_data = reset_exif_orientation(old_png)?;
 
     let data = B::try_from_vec(raw_data).expected_error()?;
 
     Ok(CompleteEditorOutput::new(data))
 }
 
-fn reset_exif_orientation(mut png: gufo::png::Png) -> Vec<u8> {
+fn reset_exif_orientation(mut png: gufo::png::Png) -> Result<Vec<u8>, glycin_utils::ProcessError> {
     let ornt = png
         .chunks()
         .into_iter()
@@ -144,8 +144,8 @@ fn reset_exif_orientation(mut png: gufo::png::Png) -> Vec<u8> {
     );
 
     let mut png_data = png.into_inner();
-    byte_changes.apply(&mut png_data);
-    png_data
+    byte_changes.apply(&mut png_data).internal_error()?;
+    Ok(png_data)
 }
 
 fn exif_orientation_value_position(data: Vec<u8>) -> Option<usize> {

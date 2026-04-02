@@ -100,7 +100,10 @@ impl ByteData for SharedMemory {
     }
 
     fn try_from_slice(value: &[u8]) -> Result<Self, MemoryAllocationError> {
-        let (memfd, mut mmap) = Self::new_memfd(u64::try_from(value.len()).unwrap()).unwrap();
+        let (memfd, mut mmap) = Self::new_memfd(
+            u64::try_from(value.len()).map_err(|err| MemoryAllocationError(err.to_string()))?,
+        )
+        .map_err(|err| MemoryAllocationError(err.to_string()))?;
 
         mmap.copy_from_slice(value.as_ref());
 
@@ -117,8 +120,7 @@ impl ByteData for SharedMemory {
         }
 
         self.seal(&[memfd::FileSeal::SealShrink, memfd::FileSeal::SealGrow])
-            .await
-            .map_err(|err| MemoryAllocationError(err.to_string()))?;
+            .await?;
 
         self.add_mut_memmap()?;
 
@@ -134,8 +136,7 @@ impl ByteData for SharedMemory {
             memfd::FileSeal::SealWrite,
             memfd::FileSeal::SealSeal,
         ])
-        .await
-        .map_err(|err| MemoryAllocationError(err.to_string()))?;
+        .await?;
 
         self.add_memmap()?;
 
@@ -211,13 +212,15 @@ impl SharedMemory {
         Ok(())
     }
 
-    async fn seal(&self, seals: &[memfd::FileSeal]) -> Result<(), memfd::Error> {
+    async fn seal(&self, seals: &[memfd::FileSeal]) -> Result<(), MemoryAllocationError> {
         let raw_fd = self.memfd.as_raw_fd();
 
         let start = std::time::Instant::now();
 
-        let mfd = memfd::Memfd::try_from_fd(raw_fd).unwrap();
-        // Sealing returns a ResourceBusy for SealWrite until no readable
+        let mfd = memfd::Memfd::try_from_fd(raw_fd)
+            .map_err(|err| MemoryAllocationError(err.to_string()))?;
+        // Sealing returns a ResourceBusy for SealWrite until no readable maps exist anymore.
+        // Practically, we are waiting for the loader to close it's mmap to the memfd.
         loop {
             // 🦭
             let seal = mfd.add_seals(seals);
@@ -227,7 +230,7 @@ impl SharedMemory {
                 Err(err) if start.elapsed() > std::time::Duration::from_secs(10) => {
                     // Give up after some time and return the error
                     std::mem::forget(mfd);
-                    return Err(err);
+                    return Err(MemoryAllocationError(err.to_string()));
                 }
                 Err(_) => {
                     // Try again after short waiting time

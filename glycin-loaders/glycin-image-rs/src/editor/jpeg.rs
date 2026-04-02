@@ -57,7 +57,7 @@ pub fn apply_complete<B: ByteData>(
         && let Some(byte_changes) = rotate_sparse(orientation, &jpeg)?
     {
         let mut data = jpeg.into_inner();
-        byte_changes.apply(&mut data);
+        byte_changes.apply(&mut data).internal_error()?;
         return CompleteEditorOutput::new_lossless(data);
     }
 
@@ -142,7 +142,9 @@ fn apply_non_sparse<B: ByteData>(
     // Since we apply all operionats, including existing exif orientation, to the
     // image itself, the Exif entry, if it exists, is now wrong
     if let Some(remove_metadata_rotate) = remove_metadata_rotate {
-        remove_metadata_rotate.apply(&mut out_buf);
+        remove_metadata_rotate
+            .apply(&mut out_buf)
+            .internal_error()?;
     }
 
     let binary_data = B::try_from_vec(out_buf).expected_error()?;

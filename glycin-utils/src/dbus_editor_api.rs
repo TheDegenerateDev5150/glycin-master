@@ -26,7 +26,7 @@ impl EditRequest {
             .to_message_pack()
             .expected_error()
             .map_err(|x| x.into_editor_error())?;
-        let operations = SharedMemory::try_from_vec(operations).unwrap();
+        let operations = SharedMemory::try_from_vec(operations)?;
         Ok(Self { operations })
     }
 

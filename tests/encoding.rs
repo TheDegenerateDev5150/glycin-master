@@ -1,4 +1,5 @@
 mod utils;
+use glycin_core as glycin;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
