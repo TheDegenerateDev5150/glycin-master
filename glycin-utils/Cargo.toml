@@ -25,7 +25,6 @@ image = { workspace = true, optional = true }
 libc.workspace = true
 libseccomp = { workspace = true, optional = true }
 log.workspace = true
-memfd = { workspace = true, optional = true }
 memmap = { workspace = true, optional = true }
 nix = { workspace = true, features = ["fs", "signal"], optional = true }
 paste.workspace = true
@@ -47,7 +46,6 @@ glib = ["dep:glib"]
 builtin = []
 external = [
     "dep:libseccomp",
-    "dep:memfd",
     "dep:memmap",
     "dep:nix",
     "dep:zbus",

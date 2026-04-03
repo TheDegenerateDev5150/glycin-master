@@ -2,6 +2,7 @@ use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsRawFd, OwnedFd};
 
 use log::warn;
+use nix::fcntl;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use zbus::zvariant;
 
@@ -119,7 +120,7 @@ impl ByteData for SharedMemory {
             return Ok(());
         }
 
-        self.seal(&[memfd::FileSeal::SealShrink, memfd::FileSeal::SealGrow])
+        self.seal(fcntl::SealFlag::F_SEAL_GROW | fcntl::SealFlag::F_SEAL_SHRINK)
             .await?;
 
         self.add_mut_memmap()?;
@@ -130,12 +131,12 @@ impl ByteData for SharedMemory {
     async fn final_seal(&mut self) -> Result<(), MemoryAllocationError> {
         self.mmap = None;
 
-        self.seal(&[
-            memfd::FileSeal::SealShrink,
-            memfd::FileSeal::SealGrow,
-            memfd::FileSeal::SealWrite,
-            memfd::FileSeal::SealSeal,
-        ])
+        self.seal(
+            fcntl::SealFlag::F_SEAL_GROW
+                | fcntl::SealFlag::F_SEAL_SHRINK
+                | fcntl::SealFlag::F_SEAL_WRITE
+                | fcntl::SealFlag::F_SEAL_SEAL,
+        )
         .await?;
 
         self.add_memmap()?;
@@ -212,25 +213,20 @@ impl SharedMemory {
         Ok(())
     }
 
-    async fn seal(&self, seals: &[memfd::FileSeal]) -> Result<(), MemoryAllocationError> {
-        let raw_fd = self.memfd.as_raw_fd();
-
+    async fn seal(&self, seals: fcntl::SealFlag) -> Result<(), MemoryAllocationError> {
         let start = std::time::Instant::now();
 
-        let mfd = memfd::Memfd::try_from_fd(raw_fd)
-            .map_err(|err| MemoryAllocationError(err.to_string()))?;
         // Sealing returns a ResourceBusy for SealWrite until no readable maps exist
         // anymore. Practically, we are waiting for the loader to close it's
         // mmap to the memfd.
         loop {
             // 🦭
-            let seal = mfd.add_seals(seals);
+            let seal = fcntl::fcntl(&self.memfd, fcntl::FcntlArg::F_ADD_SEALS(seals));
 
             match seal {
                 Ok(_) => break,
                 Err(err) if start.elapsed() > std::time::Duration::from_secs(10) => {
                     // Give up after some time and return the error
-                    std::mem::forget(mfd);
                     return Err(MemoryAllocationError(err.to_string()));
                 }
                 Err(_) => {
@@ -239,7 +235,6 @@ impl SharedMemory {
                 }
             }
         }
-        std::mem::forget(mfd);
 
         Ok(())
     }

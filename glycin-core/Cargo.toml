@@ -40,7 +40,6 @@ external = [
     "dep:zbus",
     "dep:yeslogic-fontconfig-sys",
     "dep:nix",
-    "dep:memfd",
     "glycin-utils/external",
 ]
 
@@ -68,7 +67,6 @@ lcms2-sys.workspace = true
 lcms2.workspace = true
 libc.workspace = true
 libseccomp = { workspace = true, optional = true }
-memfd = { workspace = true, optional = true }
 nix = { workspace = true, features = [
     "fs",
     "resource",

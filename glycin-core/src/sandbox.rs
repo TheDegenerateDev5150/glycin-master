@@ -2,8 +2,8 @@
 
 use std::ffi::{c_int, c_void};
 use std::fs::{DirEntry, File, canonicalize};
-use std::io::{self, BufRead, BufReader, Seek};
-use std::os::fd::{AsRawFd, BorrowedFd};
+use std::io::{self, BufRead, BufReader};
+use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
@@ -13,9 +13,9 @@ use std::sync::Arc;
 use gio::glib;
 use libseccomp::error::SeccompError;
 use libseccomp::{ScmpAction, ScmpFilterContext, ScmpSyscall};
-use memfd::{Memfd, MemfdOptions};
 use nix::libc::siginfo_t;
-use nix::sys::resource;
+use nix::sys::{memfd, resource};
+use nix::unistd;
 
 use crate::config::{ConfigEntry, ImageLoaderConfig, Processor};
 use crate::util::{self, AsyncMutex, new_async_mutex, spawn_blocking};
@@ -185,7 +185,7 @@ static_assertions::assert_impl_all!(Sandbox: Send, Sync);
 pub struct SpawnedSandbox {
     pub command: Command,
     // Keep seccomp fd alive until process exits
-    pub _seccomp_fd: Option<Memfd>,
+    pub _seccomp_fd: Option<OwnedFd>,
     pub _dbus_socket: UnixStream,
 }
 
@@ -289,7 +289,7 @@ impl Sandbox {
         })
     }
 
-    async fn bwrap_command(&self, seccomp_memfd: &Memfd) -> Result<Command, Error> {
+    async fn bwrap_command(&self, seccomp_memfd: &OwnedFd) -> Result<Command, Error> {
         let mut command = Command::new("bwrap");
 
         command.args([
@@ -674,15 +674,12 @@ impl Sandbox {
     /// Make seccomp filters available under FD
     ///
     /// Bubblewrap supports taking an fd to seccomp filters in the BPF format.
-    fn seccomp_export_bpf(filter: &ScmpFilterContext) -> Result<Memfd, Error> {
-        let memfd = MemfdOptions::default()
-            .close_on_exec(false)
-            .create("seccomp-bpf-filter")?;
-        let mut file = memfd.as_file();
+    fn seccomp_export_bpf(filter: &ScmpFilterContext) -> Result<OwnedFd, Error> {
+        let memfd = memfd::memfd_create(c"seccomp-bpf-filter", memfd::MFdFlags::empty())?;
 
-        filter.export_bpf(file)?;
+        filter.export_bpf(&memfd)?;
 
-        file.rewind()?;
+        unistd::lseek64(&memfd, 0, unistd::Whence::SeekSet)?;
 
         Ok(memfd)
     }

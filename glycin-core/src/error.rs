@@ -196,9 +196,6 @@ pub enum Error {
     #[error("Width or height is zero: {0}")]
     WidgthOrHeightZero(String),
     #[cfg(feature = "external")]
-    #[error("Memfd: {0}")]
-    MemFd(Arc<memfd::Error>),
-    #[cfg(feature = "external")]
     #[error("Seccomp: {0}")]
     Seccomp(Arc<libseccomp::error::SeccompError>),
     #[error("ICC profile: {0}")]
@@ -265,13 +262,6 @@ impl From<Arc<std::io::Error>> for Error {
             err,
             info: String::new(),
         }
-    }
-}
-
-#[cfg(feature = "external")]
-impl From<memfd::Error> for Error {
-    fn from(err: memfd::Error) -> Self {
-        Self::MemFd(Arc::new(err))
     }
 }
 
