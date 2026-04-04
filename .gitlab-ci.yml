@@ -94,6 +94,64 @@ test-fedora43-loaders:
     - GLYCIN_TEST_SKIP_EXT=exr cargo test -p tests -- --nocapture --test-threads 1 \
       color color_exif_orientation color_iccp_pro gray_iccp icon exif fonts editing_crop_too_large_value editing_rotation_90
 
+macos:
+  tags:
+    - macos
+    - arm64
+  cache:
+    - key: $CI_JOB_NAME_SLUG
+      paths:
+        - ccache
+  variables:
+    CCACHE_MAXSIZE: "250Mi"
+    CCACHE_DIR: $CI_PROJECT_DIR/ccache
+    ORKA_RUNNER: sonoma-5
+    PKG_CONFIG_PATH: $CI_PROJECT_DIR/.venv/lib/pkgconfig
+    SDKROOT: /opt/sdks/MacOSX11.3.sdk
+  before_script:
+    - | # Setup the virtual environment with basic set of tools.
+      python3 -m venv .venv
+      source .venv/bin/activate
+      pip3 install meson==1.9.0 ninja==1.11.1.1
+      ln -s /opt/ccache/ccache .venv/bin
+      ln -s /opt/rustup/toolchains/1.93.1-aarch64-apple-darwin/bin/* .venv/bin
+    - | # Clone GTK early so we can access wrapped GLib version.
+      git clone https://gitlab.gnome.org/gnome/gtk.git
+      git -C gtk checkout 4.22.2
+      git -C gtk submodule update --init --recursive
+    - | # Build GLib.
+      pip3 install crudini==0.9.6   # to pick the version from wrap file
+      pip3 install packaging==24.2  # required by GLib
+      git clone --depth 1 --branch $(crudini --get gtk/subprojects/glib.wrap wrap-git revision) https://gitlab.gnome.org/gnome/glib.git
+      meson setup -Dprefix=${CI_PROJECT_DIR}/.venv -Dintrospection=disabled -Dtests=false glib.build glib
+      meson compile -C glib.build
+      meson install -C glib.build
+    - | # Build GTK.
+      meson setup -Dprefix=${CI_PROJECT_DIR}/.venv \
+          -Dmedia-gstreamer=disabled \
+          -Dintrospection=disabled \
+          -Dbuild-demos=false \
+          -Dbuild-examples=false \
+          -Dbuild-testsuite=false \
+          -Dbuild-tests=false \
+          -Dvulkan=disabled \
+          gtk.build gtk
+      meson compile -C gtk.build
+      meson install -C gtk.build
+    - | # Install lcms2.
+      curl -L https://sourceforge.net/projects/lcms/files/lcms/2.18/lcms2-2.18.tar.gz | tar -xz
+      (
+        mkdir lcms2-2.18.build
+        cd lcms2-2.18.build
+        ../lcms2-2.18/configure --prefix ${CI_PROJECT_DIR}/.venv
+        make
+        make install
+      )
+    - | # Install pkgconfig.
+      curl -L $CI_API_V4_URL/projects/30437/packages/generic/pkgconfig/v0.29.2+10/pkg-config-0.29.2+10_$(uname -m).tar.xz | tar -C .venv -xJ
+  script:
+    - cargo build -p glycin --features gdk4
+
 windows:
   image: 'registry.fedoraproject.org/fedora:44'
   interruptible: true
