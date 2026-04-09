@@ -31,8 +31,9 @@ crate_version_bin = find_program(meson.project_source_root() / 'build-aux/crates
 cargo_env = environment()
 cargo_env.set('CARGO_HOME', cargo_home)
 
-if get_option('libglycin') and get_option('libglycin-gtk4')
-  # Let the libglycin-gtk4 build find the previously built libglycin
+if get_option('libglycin') and (get_option('libglycin-gtk4') or get_option('glycin-thumbnailer'))
+  # Let the libglycin-gtk4 or glycin-thumbnailer build find the previously
+  # built libglycin
   cargo_env.prepend(
     'PKG_CONFIG_PATH',
     meson.project_build_root() / 'meson-uninstalled',
