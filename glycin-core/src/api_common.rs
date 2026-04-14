@@ -179,34 +179,13 @@ impl GetConfig for ImageLoaderConfig {
     fn expose_base_dir(&self) -> bool {
         self.expose_base_dir
     }
+
     fn guess_mime_type<'a>(
         config: &'a Config,
         path: Option<&Path>,
         head: &[u8],
     ) -> Option<MimeType> {
-        let mut complexities = config
-            .image_loader
-            .values()
-            .map(|x| x.identifiers.iter().map(|x| x.complexity()))
-            .flatten()
-            .collect::<Vec<_>>();
-
-        complexities.sort();
-
-        for complexity in complexities.into_iter().rev() {
-            let find = config.image_loader.iter().find(|(_, x)| {
-                x.identifiers
-                    .iter()
-                    .find(|x| x.complexity() == complexity && x.matches(path, head))
-                    .is_some()
-            });
-
-            if let Some((mime_type, _)) = find {
-                return Some(mime_type.clone());
-            }
-        }
-
-        None
+        Config::guess_mime_type(config, path, head, false)
     }
 }
 
@@ -223,12 +202,11 @@ impl GetConfig for ImageEditorConfig {
     }
 
     fn guess_mime_type<'a>(
-        _config: &'a Config,
-        _path: Option<&Path>,
-        _head: &[u8],
+        config: &'a Config,
+        path: Option<&Path>,
+        head: &[u8],
     ) -> Option<MimeType> {
-        // TODO
-        None
+        Config::guess_mime_type(config, path, head, true)
     }
 }
 

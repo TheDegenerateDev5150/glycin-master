@@ -123,6 +123,56 @@ pub struct Config {
     pub(crate) image_editor: BTreeMap<MimeType, ImageEditorConfig>,
 }
 
+impl Config {
+    pub(crate) fn guess_mime_type(
+        &self,
+        path: Option<&Path>,
+        head: &[u8],
+        editor: bool,
+    ) -> Option<MimeType> {
+        let config: Box<dyn Iterator<Item = (&MimeType, ConfigEntry)>> = if editor {
+            Box::new(
+                self.image_editor
+                    .iter()
+                    .map(|(k, v)| (k, ConfigEntry::Editor(v.clone()))),
+            )
+        } else {
+            Box::new(
+                self.image_loader
+                    .iter()
+                    .map(|(k, v)| (k, ConfigEntry::Loader(v.clone()))),
+            )
+        };
+
+        let mut complexities = config
+            .map(|(_, x)| {
+                x.identifiers()
+                    .iter()
+                    .map(|x| x.complexity())
+                    .collect::<Vec<_>>()
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+
+        complexities.sort();
+
+        for complexity in complexities.into_iter().rev() {
+            let find = self.image_loader.iter().find(|(_, x)| {
+                x.identifiers
+                    .iter()
+                    .find(|x| x.complexity() == complexity && x.matches(path, head))
+                    .is_some()
+            });
+
+            if let Some((mime_type, _)) = find {
+                return Some(mime_type.clone());
+            }
+        }
+
+        None
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ConfigEntry {
     Editor(ImageEditorConfig),
@@ -203,6 +253,7 @@ impl ConfigEntryHash {
 #[derive(Debug, Clone)]
 pub struct ImageEditorConfig {
     pub processor: Processor,
+    pub identifiers: Vec<Identifier>,
     pub expose_base_dir: bool,
     pub fontconfig: bool,
     pub operations: Vec<OperationId>,
@@ -253,6 +304,13 @@ impl ConfigEntry {
         match self {
             Self::Editor(e) => e.expose_base_dir,
             Self::Loader(l) => l.expose_base_dir,
+        }
+    }
+
+    pub fn identifiers(&self) -> &[Identifier] {
+        match self {
+            Self::Editor(e) => &e.identifiers,
+            Self::Loader(l) => &l.identifiers,
         }
     }
 }
@@ -308,7 +366,8 @@ impl Config {
                     if let Ok(path) = result
                         && path.extension() == Some(OsStr::new(CONFIG_FILE_EXT))
                         && let Err(err) =
-                            Self::load_config(ConfigLoader::File(path.clone()), &mut config).await
+                            Self::load_config(ConfigProcessor::File(path.clone()), &mut config)
+                                .await
                     {
                         tracing::error!("Failed to load config file {path:?}: {err}");
                     }
@@ -322,23 +381,23 @@ impl Config {
     #[cfg(feature = "builtin")]
     pub async fn load_builtin_config(builtin: BuiltinProcessor, config: &mut Config) {
         let name = builtin.common().name();
-        if let Err(err) = Self::load_config(ConfigLoader::Builtin(builtin), config).await {
+        if let Err(err) = Self::load_config(ConfigProcessor::Builtin(builtin), config).await {
             tracing::error!("Failed to load builtin config for '{name}': {err}");
         }
     }
 
     pub async fn load_config(
-        loader: ConfigLoader,
+        loader: ConfigProcessor,
         config: &mut Config,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let data = match &loader {
             #[cfg(feature = "external")]
-            ConfigLoader::File(path) => {
+            ConfigProcessor::File(path) => {
                 tracing::trace!("Loading config file {path:?}");
                 read(path).await?
             }
             #[cfg(feature = "builtin")]
-            ConfigLoader::Builtin(builtin) => builtin.common().config().as_bytes().to_vec(),
+            ConfigProcessor::Builtin(builtin) => builtin.common().config().as_bytes().to_vec(),
         };
 
         let bytes = glib::Bytes::from_owned(data);
@@ -346,121 +405,130 @@ impl Config {
         let keyfile = glib::KeyFile::new();
         keyfile.load_from_bytes(&bytes, glib::KeyFileFlags::NONE)?;
 
+        let mut loader_mime_types = Vec::new();
+        let mut editor_mime_types = Vec::new();
+
         for group in keyfile.groups() {
-            let mut elements = group.trim().split(':');
-            let kind = elements.next();
-            let mime_type = elements.next();
+            let warning = "Unknown config group: {group}. Expected [loader:<mime-type>] or [editor:<mime-type>]. Ignoring.";
 
-            if let Some(mime_type) = mime_type {
-                let mime_type = MimeType::new(mime_type.to_string());
-                let group = group.trim();
-                match kind {
-                    Some("loader") => {
-                        if config.image_loader.contains_key(&mime_type) {
-                            continue;
-                        }
+            let elements = group.trim().split_once(':');
 
-                        if let Ok(exec) = keyfile.string(group, "Exec") {
-                            let processor = match loader {
-                                #[cfg(feature = "external")]
-                                ConfigLoader::File(_) => Processor::Binary(exec.into()),
-                                #[cfg(feature = "builtin")]
-                                ConfigLoader::Builtin(ref builtin) => {
-                                    Processor::Builtin(builtin.clone())
-                                }
-                            };
+            let Some((kind, mime_type)) = elements else {
+                tracing::warn!("{warning}");
+                continue;
+            };
 
-                            let identifiers = keyfile
-                                .string_list(group, "Identifiers")
-                                .unwrap_or_default()
-                                .iter()
-                                .filter_map(|x| match Identifier::parse(x) {
-                                    Err(err) => {
-                                        tracing::warn!("{mime_type}: Invalid identifier: {err}");
-                                        None
-                                    }
-                                    Ok(x) => Some(x),
-                                })
-                                .collect();
+            let entry = (group.to_string(), MimeType::new(mime_type.to_string()));
 
-                            let expose_base_dir =
-                                keyfile.boolean(group, "ExposeBaseDir").unwrap_or_default();
-                            let fontconfig =
-                                keyfile.boolean(group, "Fontconfig").unwrap_or_default();
-
-                            let cfg = ImageLoaderConfig {
-                                processor,
-                                expose_base_dir,
-                                fontconfig,
-                                identifiers,
-                            };
-
-                            config.image_loader.insert(mime_type, cfg);
-                        }
-                    }
-                    Some("editor") => {
-                        if config.image_editor.contains_key(&mime_type) {
-                            continue;
-                        }
-
-                        if let Ok(exec) = keyfile.string(group, "Exec") {
-                            let processor = match loader {
-                                #[cfg(feature = "external")]
-                                ConfigLoader::File(_) => Processor::Binary(exec.into()),
-                                #[cfg(feature = "builtin")]
-                                ConfigLoader::Builtin(ref builtin) => {
-                                    Processor::Builtin(builtin.clone())
-                                }
-                            };
-
-                            let expose_base_dir =
-                                keyfile.boolean(group, "ExposeBaseDir").unwrap_or_default();
-                            let fontconfig =
-                                keyfile.boolean(group, "Fontconfig").unwrap_or_default();
-
-                            let operations_str =
-                                keyfile.string_list(group, "Operations").unwrap_or_default();
-                            let operations = operations_str
-                                .into_iter()
-                                .flat_map(|x| OperationId::from_str(&x))
-                                .collect();
-
-                            let creator = keyfile.boolean(group, "Creator").unwrap_or_default();
-
-                            let creator_color_icc_profile = keyfile
-                                .boolean(group, "CreatorColorIccProfile")
-                                .unwrap_or_default();
-
-                            let creator_encoding_compression = keyfile
-                                .boolean(group, "CreatorEncodingCompression")
-                                .unwrap_or_default();
-
-                            let creator_encoding_quality = keyfile
-                                .boolean(group, "CreatorEncodingQuality")
-                                .unwrap_or_default();
-
-                            let creator_metadata_key_value = keyfile
-                                .boolean(group, "CreatorMetadataKeyValue")
-                                .unwrap_or_default();
-
-                            let cfg = ImageEditorConfig {
-                                processor,
-                                expose_base_dir,
-                                fontconfig,
-                                operations,
-                                creator,
-                                creator_color_icc_profile,
-                                creator_encoding_compression,
-                                creator_encoding_quality,
-                                creator_metadata_key_value,
-                            };
-
-                            config.image_editor.insert(mime_type, cfg);
-                        }
-                    }
-                    _ => {}
-                }
+            match kind {
+                "loader" => loader_mime_types.push(entry),
+                "editor" => editor_mime_types.push(entry),
+                _ => tracing::warn!("{warning}"),
             }
+        }
+
+        for (group, mime_type) in loader_mime_types {
+            if config.image_loader.contains_key(&mime_type) {
+                continue;
+            }
+
+            let exec = keyfile.string(&group, "Exec")?;
+
+            let processor = match loader {
+                #[cfg(feature = "external")]
+                ConfigProcessor::File(_) => Processor::Binary(exec.into()),
+                #[cfg(feature = "builtin")]
+                ConfigProcessor::Builtin(ref builtin) => Processor::Builtin(builtin.clone()),
+            };
+
+            let identifiers = Self::load_identifiers(&keyfile, &group)?.unwrap_or_default();
+
+            let expose_base_dir =
+                Self::handle_and_default(keyfile.boolean(&group, "ExposeBaseDir"))?;
+            let fontconfig = Self::handle_and_default(keyfile.boolean(&group, "Fontconfig"))?;
+
+            let cfg = ImageLoaderConfig {
+                processor,
+                expose_base_dir,
+                fontconfig,
+                identifiers,
+            };
+
+            config.image_loader.insert(mime_type, cfg);
+        }
+
+        for (group, mime_type) in editor_mime_types {
+            if config.image_editor.contains_key(&mime_type) {
+                continue;
+            }
+
+            let equiv_loader = config.image_loader.get(&mime_type);
+
+            let exec = match keyfile.string(&group, "Exec") {
+                Ok(x) => x.into(),
+                Err(err) => {
+                    if err.matches(glib::KeyFileError::KeyNotFound) {
+                        // Try to use previously defined loader Exec, otherwise, return editor's original error
+                        equiv_loader
+                            .and_then(|x| x.processor.exec().map(|x| x.to_path_buf()))
+                            .ok_or(err)?
+                    } else {
+                        return Err(Box::new(err));
+                    }
+                }
+            };
+
+            let processor = match loader {
+                #[cfg(feature = "external")]
+                ConfigProcessor::File(_) => Processor::Binary(exec),
+                #[cfg(feature = "builtin")]
+                ConfigProcessor::Builtin(ref builtin) => Processor::Builtin(builtin.clone()),
+            };
+
+            // Use identifiers previously defined in a loader with the same mime type, if not defined in editor
+            let identifiers = Self::load_identifiers(&keyfile, &group)?
+                .or_else(|| equiv_loader.and_then(|x| Some(x.identifiers.clone())))
+                .unwrap_or_default();
+
+            let expose_base_dir = keyfile.boolean(&group, "ExposeBaseDir").unwrap_or_default();
+            let fontconfig = keyfile.boolean(&group, "Fontconfig").unwrap_or_default();
+
+            let operations_str = keyfile
+                .string_list(&group, "Operations")
+                .unwrap_or_default();
+            let operations = operations_str
+                .into_iter()
+                .flat_map(|x| OperationId::from_str(&x))
+                .collect();
+
+            let creator = Self::handle_and_default(keyfile.boolean(&group, "Creator"))?;
+
+            let creator_color_icc_profile =
+                Self::handle_and_default(keyfile.boolean(&group, "CreatorColorIccProfile"))?;
+
+            let creator_encoding_compression =
+                Self::handle_and_default(keyfile.boolean(&group, "CreatorEncodingCompression"))?;
+
+            let creator_encoding_quality =
+                Self::handle_and_default(keyfile.boolean(&group, "CreatorEncodingQuality"))?;
+
+            let creator_metadata_key_value =
+                Self::handle_and_default(keyfile.boolean(&group, "CreatorMetadataKeyValue"))?;
+
+            let cfg = ImageEditorConfig {
+                processor,
+                identifiers,
+                expose_base_dir,
+                fontconfig,
+                operations,
+                creator,
+                creator_color_icc_profile,
+                creator_encoding_compression,
+                creator_encoding_quality,
+                creator_metadata_key_value,
+            };
+
+            config.image_editor.insert(mime_type, cfg);
         }
 
         Ok(())
@@ -476,9 +544,48 @@ impl Config {
             data_dirs
         }
     }
+
+    fn handle_and_default<T: Default>(res: Result<T, glib::Error>) -> Result<T, glib::Error> {
+        Self::handle(res).map(|x| x.unwrap_or_default())
+    }
+
+    fn handle<T>(res: Result<T, glib::Error>) -> Result<Option<T>, glib::Error> {
+        match res {
+            Err(err) => {
+                if err.matches(glib::KeyFileError::KeyNotFound) {
+                    Ok(None)
+                } else {
+                    Err(err)
+                }
+            }
+            Ok(x) => Ok(Some(x)),
+        }
+    }
+
+    fn load_identifiers(
+        keyfile: &glib::KeyFile,
+        group: &str,
+    ) -> Result<Option<Vec<Identifier>>, glib::Error> {
+        let Some(itentifiers) = Self::handle(keyfile.string_list(&group, "Identifiers"))? else {
+            return Ok(None);
+        };
+
+        Ok(Some(
+            itentifiers
+                .iter()
+                .filter_map(|x| match Identifier::parse(x) {
+                    Err(err) => {
+                        tracing::warn!("{group}: Invalid identifier: {err}");
+                        None
+                    }
+                    Ok(x) => Some(x),
+                })
+                .collect(),
+        ))
+    }
 }
 
-pub enum ConfigLoader {
+pub enum ConfigProcessor {
     #[cfg(feature = "external")]
     File(PathBuf),
     #[cfg(feature = "builtin")]

@@ -32,10 +32,7 @@ fn roundtrip_all() {
             MimeType::TIFF,
             MimeType::WEBP,
         ] {
-            if skip_file(&PathBuf::from(format!(
-                "placeholder.{}",
-                mime_type.extension().unwrap()
-            ))) {
+            if skip_file_ext(mime_type.extension().unwrap()) {
                 continue;
             }
 
@@ -310,6 +307,10 @@ fn write_png() {
 
 #[test]
 fn write_avif() {
+    if skip_file_ext(MimeType::AVIF.extension().unwrap()) {
+        return;
+    }
+
     block_on(async {
         init();
 

@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use gdk::prelude::*;
@@ -27,6 +27,10 @@ pub fn reference_image_path(dir: impl AsRef<Path>, frame: Option<u64>) -> PathBu
 
 pub fn skip_file(path: &Path) -> bool {
     extensions_to_skip().contains(&path.extension().unwrap_or_default().into())
+}
+
+pub fn skip_file_ext(ext: &str) -> bool {
+    extensions_to_skip().contains(&OsString::from(ext))
 }
 
 pub fn extensions_to_skip() -> Vec<OsString> {

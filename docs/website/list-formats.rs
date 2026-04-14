@@ -177,7 +177,7 @@ fn info() -> BTreeMap<String, Format> {
 
                 let mut config = glycin::config::Config::default();
                 async_io::block_on(glycin::config::Config::load_config(
-                    glycin::config::ConfigLoader::File(path.clone()),
+                    glycin::config::ConfigProcessor::File(path.clone()),
                     &mut config,
                 ))
                 .unwrap();

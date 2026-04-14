@@ -167,7 +167,7 @@ windows:
     - dnf install -y wine-core wine-desktop
     - export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER=wine
     - export WINEPATH="Z:\\usr\\x86_64-w64-mingw32\\sys-root\\mingw\\bin"
-    - GLYCIN_TEST_SKIP_EXT=svg,svgz,avif,jxl cargo test -p tests --no-default-features --features async-io,builtin-loaders --target x86_64-pc-windows-gnu -- color
+    - GLYCIN_TEST_SKIP_EXT=svg,svgz,avif,heic,jxl cargo test -p tests --no-default-features --features async-io,builtin-loaders --target x86_64-pc-windows-gnu
 
 cargo-semver-checks:
   image: rust
